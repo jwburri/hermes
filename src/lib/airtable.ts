@@ -81,6 +81,16 @@ export async function addListing(
   };
 }
 
+/**
+ * Archive a business: set Status to Archived so it drops out of the dropdown and
+ * Hermes stops answering for it. Reversible (the row and its history are kept).
+ */
+export async function archiveListing(id: string): Promise<void> {
+  await base()(config.airtable.listingsTable()).update([
+    { id, fields: { Status: "Archived" } },
+  ]);
+}
+
 /** Write one row to the Q&A log for an answered submission (Build Spec §10). */
 export async function logSubmission(
   businessName: string,

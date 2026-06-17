@@ -29,6 +29,8 @@ const EXCLUDE_PATTERNS: RegExp[] = [
   /commission/i, // commission or fee detail
   /engagement letter/i,
   /call[\s_-]?summary/i, // internal call notes
+  /asset purchase agreement/i, // deal contract: parties, price, terms
+  /outreach/i, // internal buyer-prospecting lists/trackers
 ];
 
 function isExcluded(name: string): boolean {
@@ -100,6 +102,43 @@ async function exportText(fileId: string, mimeType: string): Promise<string> {
     { responseType: "arraybuffer" },
   );
   return Buffer.from(res.data as ArrayBuffer).toString("utf8");
+}
+
+/**
+ * Reviewer questions and seller replies often live in a file's Drive comments,
+ * not its body text (the export does not include them). Fetch them and format
+ * them as labelled Q&A. Author names are omitted to avoid leaking identity.
+ */
+async function fetchComments(fileId: string): Promise<string> {
+  try {
+    const res = await getDrive().comments.list({
+      fileId,
+      fields: "comments(content,quotedFileContent/value,replies(content))",
+      pageSize: 100,
+      includeDeleted: false,
+    });
+    const comments = res.data.comments ?? [];
+    const blocks: string[] = [];
+    for (const c of comments) {
+      const content = (c.content ?? "").trim();
+      if (!content) continue;
+      const quoted = c.quotedFileContent?.value?.trim();
+      blocks.push(quoted ? `- On "${quoted}": ${content}` : `- ${content}`);
+      for (const r of c.replies ?? []) {
+        const reply = (r.content ?? "").trim();
+        if (reply) blocks.push(`    reply: ${reply}`);
+      }
+    }
+    if (!blocks.length) return "";
+    return (
+      "\n--- Reviewer questions and seller replies (from document comments) ---\n" +
+      blocks.join("\n") +
+      "\n"
+    );
+  } catch {
+    // Comments unavailable for this file type; ignore.
+    return "";
+  }
 }
 
 function xlsxToText(buffer: Buffer): string {
@@ -218,7 +257,8 @@ export async function loadKnowledgeBase(
           filesSkipped.push({ name, reason: "no readable text" });
           continue;
         }
-        const section = `===== FILE: ${name} =====\n${text.trim()}\n`;
+        const comments = await fetchComments(file.id!);
+        const section = `===== FILE: ${name} =====\n${text.trim()}\n${comments}`;
         if (totalChars + section.length > MAX_KB_CHARS) {
           truncated = true;
           filesSkipped.push({ name, reason: "skipped: size limit reached" });
