@@ -14,8 +14,17 @@ import { verifySessionToken } from "./lib/session";
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Public paths: the login page and the login API.
-  if (pathname === "/login" || pathname === "/api/login") {
+  // Public paths: the login page, the login API, and crawler/browser metadata
+  // files (so robots.txt and the favicon are reachable without a session).
+  const PUBLIC = new Set([
+    "/login",
+    "/api/login",
+    "/robots.txt",
+    "/icon.svg",
+    "/favicon.ico",
+    "/sitemap.xml",
+  ]);
+  if (PUBLIC.has(pathname)) {
     return NextResponse.next();
   }
 
