@@ -7,6 +7,17 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/answer": ["./Hermes_Brain.md"],
   },
+  // Internal tool: tell every crawler not to index any response.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Header } from "../components/Header";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -34,36 +35,39 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex-1 flex items-center justify-center p-6">
-      <form
-        onSubmit={handleSubmit}
-        className="w-full max-w-sm bg-white rounded-lg shadow-sm border border-gray-200 p-8"
-      >
-        <h1 className="text-2xl font-semibold mb-1">Hermes</h1>
-        <p className="text-sm text-gray-500 mb-6">Team login</p>
+    <>
+      <Header showNav={false} />
+      <main className="flex-1 flex items-center justify-center p-6">
+        <form onSubmit={handleSubmit} className="card w-full max-w-sm">
+          <h1 className="text-xl font-medium mb-1">Team login</h1>
+          <p className="text-sm mb-6" style={{ color: "var(--muted)" }}>
+            Sign in to answer buyer questions.
+          </p>
 
-        <label className="block text-sm font-medium mb-1" htmlFor="password">
-          Password
-        </label>
-        <input
-          id="password"
-          type="password"
-          autoFocus
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="w-full border border-gray-300 rounded-md px-3 py-2 mb-4 focus:outline-none focus:ring-2 focus:ring-gray-400"
-        />
+          <label className="field-label" htmlFor="password">
+            Password
+          </label>
+          <input
+            id="password"
+            type="password"
+            autoFocus
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="input mb-4"
+          />
 
-        {error && <p className="text-sm text-red-600 mb-4">{error}</p>}
+          {error && <p className="text-sm text-red-600 mb-4">{error}</p>}
 
-        <button
-          type="submit"
-          disabled={loading || !password}
-          className="w-full bg-gray-900 text-white rounded-md py-2 font-medium disabled:opacity-50"
-        >
-          {loading ? "Checking…" : "Log in"}
-        </button>
-      </form>
-    </main>
+          <button
+            type="submit"
+            disabled={loading || !password}
+            className="btn-primary w-full justify-center"
+          >
+            {loading && <span className="spinner" aria-hidden />}
+            {loading ? "Checking…" : "Log in"}
+          </button>
+        </form>
+      </main>
+    </>
   );
 }

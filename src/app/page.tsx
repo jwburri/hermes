@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
+import { Header } from "./components/Header";
+import { Footer } from "./components/Footer";
 
 interface Business {
   id: string;
@@ -10,7 +10,6 @@ interface Business {
 }
 
 export default function Home() {
-  const router = useRouter();
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [businessId, setBusinessId] = useState("");
   const [questions, setQuestions] = useState("");
@@ -72,88 +71,73 @@ export default function Home() {
     setTimeout(() => setCopied(false), 2000);
   }
 
-  async function handleLogout() {
-    await fetch("/api/logout", { method: "POST" });
-    router.push("/login");
-    router.refresh();
-  }
+  const canSubmit = !loading && !!businessId && questions.trim().length > 0;
 
   return (
-    <main className="flex-1 w-full max-w-3xl mx-auto p-6">
-      <header className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold">Hermes</h1>
-        <nav className="flex items-center gap-4 text-sm">
-          <Link href="/add-business" className="text-gray-700 underline">
-            Add business
-          </Link>
-          <button onClick={handleLogout} className="text-gray-500">
-            Log out
+    <>
+      <Header />
+      <main className="flex-1 w-full max-w-[760px] mx-auto px-6 py-8">
+        <form onSubmit={handleSubmit} className="card mb-6">
+          <label className="field-label" htmlFor="business">
+            Business
+          </label>
+          <select
+            id="business"
+            value={businessId}
+            onChange={(e) => setBusinessId(e.target.value)}
+            className="input mb-4"
+          >
+            <option value="">Select a business…</option>
+            {businesses.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+          {loadError && (
+            <p className="text-sm text-red-600 mb-4">{loadError}</p>
+          )}
+
+          <label className="field-label" htmlFor="questions">
+            Paste the buyer&apos;s questions here
+          </label>
+          <textarea
+            id="questions"
+            value={questions}
+            onChange={(e) => setQuestions(e.target.value)}
+            rows={8}
+            placeholder={"1. How much profit does the business make each month?\n2. Why is the seller selling?"}
+            className="input mb-4"
+            style={{ resize: "vertical" }}
+          />
+
+          <button type="submit" disabled={!canSubmit} className="btn-primary">
+            {loading && <span className="spinner" aria-hidden />}
+            {loading ? "Answering…" : "Get answers"}
           </button>
-        </nav>
-      </header>
+        </form>
 
-      <form
-        onSubmit={handleSubmit}
-        className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6"
-      >
-        <label className="block text-sm font-medium mb-1" htmlFor="business">
-          Business
-        </label>
-        <select
-          id="business"
-          value={businessId}
-          onChange={(e) => setBusinessId(e.target.value)}
-          className="w-full border border-gray-300 rounded-md px-3 py-2 mb-4 bg-white focus:outline-none focus:ring-2 focus:ring-gray-400"
-        >
-          <option value="">Select a business…</option>
-          {businesses.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}
-            </option>
-          ))}
-        </select>
-        {loadError && <p className="text-sm text-red-600 mb-4">{loadError}</p>}
+        {error && <p className="text-sm text-red-600 mb-4">{error}</p>}
 
-        <label className="block text-sm font-medium mb-1" htmlFor="questions">
-          Paste the buyer&apos;s questions here
-        </label>
-        <textarea
-          id="questions"
-          value={questions}
-          onChange={(e) => setQuestions(e.target.value)}
-          rows={8}
-          placeholder={"1. How much profit does the business make each month?\n2. Why is the seller selling?"}
-          className="w-full border border-gray-300 rounded-md px-3 py-2 mb-4 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
-        />
-
-        <button
-          type="submit"
-          disabled={loading || !businessId || !questions.trim()}
-          className="bg-gray-900 text-white rounded-md px-5 py-2 font-medium disabled:opacity-50"
-        >
-          {loading ? "Getting answers…" : "Get answers"}
-        </button>
-      </form>
-
-      {error && <p className="text-sm text-red-600 mb-4">{error}</p>}
-
-      {(answer || loading) && (
-        <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-medium text-gray-500">Answer</h2>
-            <button
-              onClick={handleCopy}
-              disabled={!answer}
-              className="text-sm border border-gray-300 rounded-md px-3 py-1 disabled:opacity-50"
-            >
-              {copied ? "Copied" : "Copy answers"}
-            </button>
-          </div>
-          <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
-            {answer || "…"}
-          </pre>
-        </section>
-      )}
-    </main>
+        {(answer || loading) && (
+          <section className="card">
+            <div className="flex items-center justify-between mb-3">
+              <span className="field-label" style={{ marginBottom: 0 }}>
+                Answer
+              </span>
+              <button
+                onClick={handleCopy}
+                disabled={!answer}
+                className="btn-outline"
+              >
+                {copied ? "Copied" : "Copy answers"}
+              </button>
+            </div>
+            <div className="answer-text">{answer || "…"}</div>
+          </section>
+        )}
+      </main>
+      <Footer />
+    </>
   );
 }
