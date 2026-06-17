@@ -1,0 +1,35 @@
+# Render service definition for Hermes.
+# Secrets (sync: false) are set in the Render dashboard, never committed here.
+services:
+  - type: web
+    name: hermes
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-haiku-4-5-20251001
+      - key: ANTHROPIC_THINKING_BUDGET
+        value: "1500"
+      - key: ANTHROPIC_MAX_TOKENS
+        value: "3500"
+      - key: AIRTABLE_API_KEY
+        sync: false
+      - key: AIRTABLE_BASE_ID
+        sync: false
+      - key: AIRTABLE_LISTINGS_TABLE
+        value: Hermes Listings
+      - key: AIRTABLE_LOG_TABLE
+        value: Hermes Q&A Log
+      - key: AIRTABLE_REFERRED_TABLE
+        value: Hermes Referred Questions
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: TEAM_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        sync: false

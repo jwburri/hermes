@@ -1,36 +1,47 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Hermes
 
-## Getting Started
+JWB's buyer-question answering app (Phase 1a). A team member logs in, picks a
+business, pastes a buyer's questions, and gets formatted answers in Joe's voice,
+drawn from that business's buyer-safe Google Drive folder.
 
-First, run the development server:
+Built to the spec in `Hermes_Build_Spec.md`. The system prompt lives in
+`Hermes_Brain.md` and is loaded at runtime — never copied into code.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Stack
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- Next.js 16 (App Router, TypeScript) on Vercel
+- Anthropic Claude API (`@anthropic-ai/sdk`), Haiku 4.5 by default
+- Airtable for the listing registry and the Q&A log
+- Google Drive API v3 via a read-only service account
+- Tailwind CSS, shared-password auth with a signed session cookie
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## How it fits together
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- `src/lib/config.ts` — all environment config in one place
+- `src/lib/brain.ts` — loads `Hermes_Brain.md`, splits the system prompt from the
+  context template, fills the three placeholders
+- `src/lib/airtable.ts` — registry read/write and the Q&A log
+- `src/lib/drive.ts` — service-account auth, folder listing, text extraction
+- `src/lib/anthropic.ts` — the streaming Claude call
+- `src/lib/session.ts` + `src/proxy.ts` — login cookie and route protection
+- `src/app/api/answer/route.ts` — the single reusable answer endpoint (Build
+  Spec §3); the UI is just a caller, so Phase 2 buyer links reuse it
+- `src/app/page.tsx` — main screen; `login/` and `add-business/` — the other two
 
-## Learn More
+## Running locally
 
-To learn more about Next.js, take a look at the following resources:
+1. Copy `.env.example` to `.env.local` and fill in every value (see Build Spec
+   §14). A `SESSION_SECRET` is generated for you on first setup.
+2. `npm install`
+3. `npm run dev` and open http://localhost:3000
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Environment variables
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+See `.env.example`. All secrets are server-side only; nothing is exposed to the
+browser.
 
-## Deploy on Vercel
+## Maintenance
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Operational tasks (add a business, capture a seller answer, change the password,
+tune the model) are in Build Spec §13. All code changes go through Claude Code —
+the team never edits this code by hand.
