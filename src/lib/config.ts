@@ -2,8 +2,8 @@
  * Central configuration for Hermes, read from environment variables.
  *
  * Every secret lives server-side only. Nothing here is exposed to the browser
- * (no NEXT_PUBLIC_ vars). The model and the extended-thinking budget are single
- * config values so they can be tuned without code changes (Build Spec §8, §14).
+ * (no NEXT_PUBLIC_ vars). The model and the thinking effort are single config
+ * values so they can be tuned without code changes (Build Spec §8, §14).
  */
 
 function required(name: string): string {
@@ -21,16 +21,21 @@ function optional(name: string, fallback: string): string {
   return value && value.trim() !== "" ? value : fallback;
 }
 
+/** parseInt that falls back instead of returning NaN on a non-numeric value. */
+function optionalInt(name: string, fallback: number): number {
+  const parsed = parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 export const config = {
   anthropic: {
     apiKey: () => required("ANTHROPIC_API_KEY"),
-    // Default model is Haiku 4.5 (Build Spec §8). Single config value.
-    model: () => optional("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
-    // Extended thinking budget in tokens. 0 disables thinking. Default ~1500.
-    thinkingBudget: () =>
-      parseInt(optional("ANTHROPIC_THINKING_BUDGET", "1500"), 10),
-    // Max output tokens. Must comfortably exceed the thinking budget.
-    maxTokens: () => parseInt(optional("ANTHROPIC_MAX_TOKENS", "3500"), 10),
+    // Default model is Sonnet 5 (Build Spec §8). Single config value.
+    model: () => optional("ANTHROPIC_MODEL", "claude-sonnet-5"),
+    // Thinking depth / overall token spend. low | medium | high | xhigh | max.
+    effort: () => optional("ANTHROPIC_EFFORT", "high"),
+    // Max output tokens. Adaptive thinking shares this budget with the answer.
+    maxTokens: () => optionalInt("ANTHROPIC_MAX_TOKENS", 32000),
   },
   airtable: {
     apiKey: () => required("AIRTABLE_API_KEY"),

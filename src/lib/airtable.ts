@@ -91,20 +91,66 @@ export async function archiveListing(id: string): Promise<void> {
   ]);
 }
 
-/** Write one row to the Q&A log for an answered submission (Build Spec §10). */
+/** The run detail written alongside the answer, for internal review. */
+export interface AnswerLogMeta {
+  model: string;
+  effort: string;
+  filesRead: { name: string; modified: string }[];
+  filesSkipped: { name: string; reason: string }[];
+  truncated: boolean;
+  stopReason: string;
+  inputTokens: number;
+  cacheReadTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * Write one row to the Q&A log for an answered submission (Build Spec §10).
+ *
+ * The meta columns are added to Airtable separately. If the full write fails
+ * for any reason it is retried with the four original fields, so logging never
+ * breaks the answer.
+ */
 export async function logSubmission(
   businessName: string,
   buyerQuestions: string,
   hermesAnswer: string,
+  meta?: AnswerLogMeta,
 ): Promise<void> {
-  await base()(config.airtable.logTable()).create([
-    {
-      fields: {
-        Business: businessName,
-        Timestamp: new Date().toISOString(),
-        "Buyer Questions": buyerQuestions,
-        "Hermes Answer": hermesAnswer,
-      },
-    },
-  ]);
+  const table = base()(config.airtable.logTable());
+  const core = {
+    Business: businessName,
+    Timestamp: new Date().toISOString(),
+    "Buyer Questions": buyerQuestions,
+    "Hermes Answer": hermesAnswer,
+  };
+
+  if (!meta) {
+    await table.create([{ fields: core }]);
+    return;
+  }
+
+  const fields = {
+    ...core,
+    Model: meta.model,
+    Effort: meta.effort,
+    "Files Read": meta.filesRead
+      .map((f) => `${f.name} (${f.modified})`)
+      .join("\n"),
+    "Files Skipped": meta.filesSkipped
+      .map((f) => `${f.name} — ${f.reason}`)
+      .join("\n"),
+    Truncated: meta.truncated,
+    "Stop Reason": meta.stopReason,
+    "Input Tokens": meta.inputTokens,
+    "Cache Read Tokens": meta.cacheReadTokens,
+    "Output Tokens": meta.outputTokens,
+  };
+
+  try {
+    await table.create([{ fields }]);
+  } catch (err) {
+    console.error("Q&A log write failed, retrying without meta columns:", err);
+    await table.create([{ fields: core }]);
+  }
 }

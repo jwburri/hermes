@@ -12,11 +12,11 @@ services:
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: ANTHROPIC_MODEL
-        value: claude-haiku-4-5-20251001
-      - key: ANTHROPIC_THINKING_BUDGET
-        value: "1500"
+        value: claude-sonnet-5
+      - key: ANTHROPIC_EFFORT
+        value: high
       - key: ANTHROPIC_MAX_TOKENS
-        value: "3500"
+        value: "32000"
       - key: AIRTABLE_API_KEY
         sync: false
       - key: AIRTABLE_BASE_ID

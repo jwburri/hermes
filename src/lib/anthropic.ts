@@ -1,9 +1,15 @@
 /**
  * The Claude API call (Build Spec §8).
  *
- * Haiku 4.5 by default, with extended thinking on a tunable budget. We stream
- * the response so the team sees the answer appear, and so only the visible
- * answer text reaches the browser — internal thinking never leaves the server.
+ * Sonnet 5 by default, with adaptive thinking at a tunable effort level. We
+ * stream the response so the team sees the answer appear, and so only the
+ * visible answer text reaches the browser — internal thinking never leaves the
+ * server.
+ *
+ * The system prompt and the stable half of the user message (business name,
+ * knowledge base, coverage) are cached for an hour. Everything before the
+ * buyer's questions must stay byte-stable between calls for the same business,
+ * or the cache is missed.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -16,11 +22,24 @@ function getClient(): Anthropic {
   return client;
 }
 
+export interface AnswerUsage {
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  outputTokens: number;
+}
+
+export interface AnswerResult {
+  stopReason: Anthropic.StopReason | null;
+  usage: AnswerUsage;
+  model: string;
+}
+
 export interface AnswerStream {
   /** Async iterator of answer text chunks (visible answer only). */
   textChunks: AsyncIterable<string>;
-  /** Resolves to the full answer text once streaming completes. */
-  fullText: () => Promise<string>;
+  /** Resolves to the stop reason, usage and model once streaming completes. */
+  final: () => Promise<AnswerResult>;
 }
 
 /**
@@ -29,46 +48,40 @@ export interface AnswerStream {
  */
 export function streamAnswer(
   systemPrompt: string,
-  userMessage: string,
+  stablePrefix: string,
+  buyerQuestions: string,
 ): AnswerStream {
-  const model = config.anthropic.model();
-  const thinkingBudget = config.anthropic.thinkingBudget();
-  let maxTokens = config.anthropic.maxTokens();
-
-  const thinkingOn = thinkingBudget > 0;
-
-  // Build params. With thinking ON the API requires temperature = 1 (default),
-  // so we omit it; with thinking OFF we use a low temperature for consistency
-  // (Build Spec §8).
-  const params: Anthropic.MessageStreamParams = {
-    model,
-    max_tokens: maxTokens,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userMessage }],
+  const cache: Anthropic.CacheControlEphemeral = {
+    type: "ephemeral",
+    ttl: "1h",
   };
 
-  if (thinkingOn) {
-    // budget_tokens must be >= 1024 and strictly less than max_tokens.
-    const budget = Math.max(1024, thinkingBudget);
-    if (maxTokens <= budget + 512) {
-      maxTokens = budget + 1024;
-      params.max_tokens = maxTokens;
-    }
-    params.thinking = { type: "enabled", budget_tokens: budget };
-  } else {
-    params.temperature = 0.3;
-  }
+  const stream = getClient().messages.stream({
+    model: config.anthropic.model(),
+    max_tokens: config.anthropic.maxTokens(),
+    thinking: { type: "adaptive" },
+    // The API validates the effort value; no local list to keep in sync.
+    output_config: {
+      effort: config.anthropic.effort() as Anthropic.OutputConfig["effort"],
+    },
+    system: [{ type: "text", text: systemPrompt, cache_control: cache }],
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: stablePrefix, cache_control: cache },
+          { type: "text", text: buyerQuestions },
+        ],
+      },
+    ],
+  });
 
-  const stream = getClient().messages.stream(params);
-
-  let resolvedFull = "";
   async function* iterate(): AsyncGenerator<string> {
     for await (const event of stream) {
       if (
         event.type === "content_block_delta" &&
         event.delta.type === "text_delta"
       ) {
-        resolvedFull += event.delta.text;
         yield event.delta.text;
       }
     }
@@ -76,13 +89,18 @@ export function streamAnswer(
 
   return {
     textChunks: iterate(),
-    fullText: async () => {
+    final: async () => {
       const final = await stream.finalMessage();
-      const text = final.content
-        .filter((b): b is Anthropic.TextBlock => b.type === "text")
-        .map((b) => b.text)
-        .join("");
-      return text || resolvedFull;
+      return {
+        stopReason: final.stop_reason,
+        model: final.model,
+        usage: {
+          inputTokens: final.usage.input_tokens,
+          cacheReadTokens: final.usage.cache_read_input_tokens ?? 0,
+          cacheCreationTokens: final.usage.cache_creation_input_tokens ?? 0,
+          outputTokens: final.usage.output_tokens,
+        },
+      };
     },
   };
 }

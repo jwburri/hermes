@@ -16,6 +16,8 @@ const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 // Rough guard: ~4 chars per token, model holds ~150k words (~200k tokens).
 // Stop well short so a request never fails for size (Build Spec §7).
 const MAX_KB_CHARS = 600_000;
+// No single file may swamp the knowledge base. Anything longer is truncated.
+const MAX_FILE_CHARS = 300_000;
 // How deep to walk subfolders inside the registered folder.
 const MAX_DEPTH = 3;
 
@@ -25,6 +27,7 @@ const MAX_DEPTH = 3;
 // defence is still keeping these out of the registered folder; this is a backstop
 // for anything accidentally left in. Tune the list as naming conventions change.
 const EXCLUDE_PATTERNS: RegExp[] = [
+  /\blegals?\b/i, // "Legals" folder, "Legal Advice.pdf", …
   /broker/i, // broker / brokering / brokerage agreement
   /commission/i, // commission or fee detail
   /engagement letter/i,
@@ -33,18 +36,76 @@ const EXCLUDE_PATTERNS: RegExp[] = [
   /outreach/i, // internal buyer-prospecting lists/trackers
 ];
 
-function isExcluded(name: string): boolean {
-  return EXCLUDE_PATTERNS.some((re) => re.test(name));
+// Deal documents, matched against FILE names only: a folder called
+// "LOI Dataroom" can legitimately hold the buyer-safe data room. Letter-based
+// boundaries rather than \b, because "_" counts as a word character and
+// "Gronanda_LOI_v2" would otherwise slip through.
+const DEAL_FILE_PATTERNS: RegExp[] = [
+  /(?<![a-z])LOI(?![a-z])/i, // letter of intent
+  /(?<![a-z])APA(?![a-z])/i, // asset purchase agreement (abbreviated)
+  /letter of intent/i,
+  /negotiat/i,
+  /term sheet/i,
+  /heads of terms/i,
+];
+
+/** The one reason string for a confidential exclusion. */
+const EXCLUDED_REASON = "excluded (confidential)";
+
+// At most this many "Not read" entries reach the prompt, so a huge folder
+// cannot bloat it.
+const MAX_COVERAGE_SKIPPED = 40;
+
+function isExcluded(name: string, isFolder: boolean): boolean {
+  return (
+    EXCLUDE_PATTERNS.some((re) => re.test(name)) ||
+    (!isFolder && DEAL_FILE_PATTERNS.some((re) => re.test(name)))
+  );
+}
+
+export interface FileRead {
+  name: string;
+  /** Last modified date as yyyy-mm-dd, or "unknown" if Drive reported none. */
+  modified: string;
+}
+
+export interface FileSkipped {
+  name: string;
+  reason: string;
 }
 
 export interface KnowledgeBase {
   /** The concatenated, labelled text of every readable file. */
   text: string;
-  /** Filenames successfully read. */
-  filesRead: string[];
-  /** Filenames skipped (e.g. image-only, unreadable) with a short reason. */
-  filesSkipped: { name: string; reason: string }[];
+  /** Files successfully read. */
+  filesRead: FileRead[];
+  /** Files skipped (e.g. image-only, unreadable, excluded) with a reason. */
+  filesSkipped: FileSkipped[];
+  /** True if any file was truncated or the overall size cap was reached. */
   truncated: boolean;
+}
+
+/**
+ * The two coverage lists that go into the prompt, so the model knows what it
+ * did and did not see. Dates only (no time), so this stays byte-stable between
+ * calls for the same business and the prompt cache keeps hitting.
+ */
+export function renderCoverage(kb: KnowledgeBase): string {
+  const read = kb.filesRead.length
+    ? kb.filesRead
+        .map((f) => `Read: ${f.name} (last modified ${f.modified})`)
+        .join("\n")
+    : "Read: none";
+  // Confidential exclusions are left out entirely: the model must never learn
+  // that a deal document exists. They stay in kb.filesSkipped for the UI/log.
+  const notRead = kb.filesSkipped.filter((f) => f.reason !== EXCLUDED_REASON);
+  const lines = notRead
+    .slice(0, MAX_COVERAGE_SKIPPED)
+    .map((f) => `Not read: ${f.name} (${f.reason})`);
+  if (notRead.length > MAX_COVERAGE_SKIPPED) {
+    lines.push(`…and ${notRead.length - MAX_COVERAGE_SKIPPED} more`);
+  }
+  return `${read}\n${lines.length ? lines.join("\n") : "Not read: none"}`;
 }
 
 let driveClient: drive_v3.Drive | null = null;
@@ -141,12 +202,33 @@ async function fetchComments(fileId: string): Promise<string> {
   }
 }
 
+/**
+ * Every tab of a workbook as labelled CSV. cellDates + dateNF keep dates
+ * readable (2024-03-01) instead of Excel serials (45352), and blankrows drops
+ * rows that are entirely empty.
+ */
 function xlsxToText(buffer: Buffer): string {
-  const wb = XLSX.read(buffer, { type: "buffer" });
+  const wb = XLSX.read(buffer, {
+    type: "buffer",
+    cellDates: true,
+    dateNF: "yyyy-mm-dd",
+  });
   return wb.SheetNames.map((name) => {
-    const csv = XLSX.utils.sheet_to_csv(wb.Sheets[name]);
+    const csv = XLSX.utils.sheet_to_csv(wb.Sheets[name], {
+      dateNF: "yyyy-mm-dd",
+      blankrows: false,
+    });
     return `# Sheet: ${name}\n${csv}`;
   }).join("\n\n");
+}
+
+/** Export a Google-native file as bytes (rather than as text). */
+async function exportBuffer(fileId: string, mimeType: string): Promise<Buffer> {
+  const res = await getDrive().files.export(
+    { fileId, mimeType },
+    { responseType: "arraybuffer" },
+  );
+  return Buffer.from(res.data as ArrayBuffer);
 }
 
 /** Extract text from a single Drive file. Returns null if unreadable. */
@@ -160,7 +242,17 @@ async function extractFile(
     case "application/vnd.google-apps.document":
       return exportText(id, "text/plain");
     case "application/vnd.google-apps.spreadsheet":
-      return exportText(id, "text/csv");
+      // CSV export only returns the first tab, so go via xlsx to get them all.
+      try {
+        return xlsxToText(
+          await exportBuffer(
+            id,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          ),
+        );
+      } catch {
+        return exportText(id, "text/csv"); // first tab only, better than nothing
+      }
     case "application/vnd.google-apps.presentation":
       return exportText(id, "text/plain");
     case "application/pdf": {
@@ -206,7 +298,8 @@ async function listFolder(folderId: string): Promise<drive_v3.Schema$File[]> {
   do {
     const res = await getDrive().files.list({
       q: `'${folderId}' in parents and trashed = false`,
-      fields: "nextPageToken, files(id, name, mimeType)",
+      fields: "nextPageToken, files(id, name, mimeType, modifiedTime)",
+      orderBy: "folder,name",
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
       pageSize: 100,
@@ -215,73 +308,109 @@ async function listFolder(folderId: string): Promise<drive_v3.Schema$File[]> {
     files.push(...(res.data.files ?? []));
     pageToken = res.data.nextPageToken ?? undefined;
   } while (pageToken);
-  return files;
+  // Deterministic order, so the cached prompt prefix stays byte-stable. Plain
+  // codepoint order, not localeCompare, which varies with the host locale.
+  return files.sort((a, b) => {
+    const [x, y] = [a.name ?? "", b.name ?? ""];
+    return x < y ? -1 : x > y ? 1 : 0;
+  });
 }
 
+type Item =
+  | { name: string; reason: string }
+  | { name: string; modified: string; text: string; cut: boolean };
+
 /**
- * Build the knowledge base for a folder: list every file (walking subfolders),
- * extract text from each, and concatenate with filename labels.
+ * Walk a folder tree and extract every readable file. Files within a folder
+ * (and sibling subfolders) are fetched in parallel; the returned list keeps
+ * Drive's sorted order so the prompt stays byte-stable.
  */
-export async function loadKnowledgeBase(
-  folderId: string,
-): Promise<KnowledgeBase> {
-  const filesRead: string[] = [];
-  const filesSkipped: { name: string; reason: string }[] = [];
+async function collect(id: string, depth: number): Promise<Item[]> {
+  if (depth > MAX_DEPTH) return [];
+  const entries = await listFolder(id);
+  const nested = await Promise.all(
+    entries.map(async (file): Promise<Item[]> => {
+      const name = file.name ?? "(untitled)";
+      const isFolder =
+        file.mimeType === "application/vnd.google-apps.folder";
+      // Hard exclusion: confidential files/folders are never read (backstop to
+      // keeping them out of the registered folder).
+      if (isExcluded(name, isFolder)) return [{ name, reason: EXCLUDED_REASON }];
+      if (isFolder) return collect(file.id!, depth + 1);
+      try {
+        let text = (await extractFile(file))?.trim() ?? "";
+        if (!text) return [{ name, reason: "no readable text" }];
+        const cut = text.length > MAX_FILE_CHARS;
+        if (cut) {
+          text =
+            text.slice(0, MAX_FILE_CHARS) +
+            "\n[truncated: file exceeds size cap]";
+        }
+        const comments = await fetchComments(file.id!);
+        return [
+          {
+            name,
+            modified: (file.modifiedTime ?? "").slice(0, 10) || "unknown",
+            text: `${text}\n${comments}`,
+            cut,
+          },
+        ];
+      } catch (err) {
+        // Fixed reason string, so the cached prompt prefix stays byte-stable.
+        console.error(`Drive read error for ${name}:`, (err as Error).message);
+        return [{ name, reason: "read error" }];
+      }
+    }),
+  );
+  return nested.flat();
+}
+
+/** Concatenate the collected files with filename labels, applying the size caps. */
+async function buildKnowledgeBase(folderId: string): Promise<KnowledgeBase> {
+  const filesRead: FileRead[] = [];
+  const filesSkipped: FileSkipped[] = [];
   const sections: string[] = [];
   let totalChars = 0;
   let truncated = false;
 
-  async function walk(id: string, depth: number): Promise<void> {
-    if (depth > MAX_DEPTH || truncated) return;
-    const entries = await listFolder(id);
-
-    for (const file of entries) {
-      if (truncated) return;
-      const name = file.name ?? "(untitled)";
-
-      // Hard exclusion: confidential files/folders are never read (backstop to
-      // keeping them out of the registered folder).
-      if (isExcluded(name)) {
-        filesSkipped.push({ name, reason: "excluded (confidential)" });
-        continue;
-      }
-
-      if (file.mimeType === "application/vnd.google-apps.folder") {
-        await walk(file.id!, depth + 1);
-        continue;
-      }
-
-      try {
-        const text = await extractFile(file);
-        if (text === null || text.trim() === "") {
-          filesSkipped.push({ name, reason: "no readable text" });
-          continue;
-        }
-        const comments = await fetchComments(file.id!);
-        const section = `===== FILE: ${name} =====\n${text.trim()}\n${comments}`;
-        if (totalChars + section.length > MAX_KB_CHARS) {
-          truncated = true;
-          filesSkipped.push({ name, reason: "skipped: size limit reached" });
-          break;
-        }
-        sections.push(section);
-        filesRead.push(name);
-        totalChars += section.length;
-      } catch (err) {
-        filesSkipped.push({
-          name,
-          reason: `read error: ${(err as Error).message}`,
-        });
-      }
+  for (const item of await collect(folderId, 0)) {
+    if ("reason" in item) {
+      filesSkipped.push(item);
+      continue;
     }
+    const section = `===== FILE: ${item.name} =====\n${item.text}`;
+    if (totalChars + section.length > MAX_KB_CHARS) {
+      truncated = true;
+      filesSkipped.push({
+        name: item.name,
+        reason: "knowledge base size cap reached",
+      });
+      continue;
+    }
+    if (item.cut) truncated = true;
+    sections.push(section);
+    filesRead.push({ name: item.name, modified: item.modified });
+    totalChars += section.length;
   }
 
-  await walk(folderId, 0);
+  return { text: sections.join("\n"), filesRead, filesSkipped, truncated };
+}
 
-  return {
-    text: sections.join("\n"),
-    filesRead,
-    filesSkipped,
-    truncated,
-  };
+// ponytail: per-process in-memory cache; move to a shared store if Hermes ever
+// runs more than one instance. Storing the promise also dedupes concurrent
+// requests for the same business.
+const KB_TTL_MS = 5 * 60 * 1000;
+const kbCache = new Map<string, { at: number; kb: Promise<KnowledgeBase> }>();
+
+/**
+ * Load the knowledge base for a registered folder, reusing a copy fetched in
+ * the last five minutes (Build Spec §7).
+ */
+export function loadKnowledgeBase(folderId: string): Promise<KnowledgeBase> {
+  const hit = kbCache.get(folderId);
+  if (hit && Date.now() - hit.at < KB_TTL_MS) return hit.kb;
+  const kb = buildKnowledgeBase(folderId);
+  kbCache.set(folderId, { at: Date.now(), kb });
+  kb.catch(() => kbCache.delete(folderId));
+  return kb;
 }

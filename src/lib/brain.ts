@@ -8,8 +8,11 @@
  * The file has two regions below the "SYSTEM PROMPT" marker:
  *   1. The instructions (identity, voice, answer rules, formatting). These become
  *      the system prompt.
- *   2. The "CONTEXT INJECTED BY THE APP" section, a template with three
+ *   2. The "CONTEXT INJECTED BY THE APP" section, a template with four
  *      placeholders. We fill those and send the result as the user message.
+ *
+ * The parsed result is cached at module level, so the file is read once per
+ * process. Editing it takes effect on the next deploy or restart.
  */
 
 import { promises as fs } from "fs";
@@ -75,18 +78,42 @@ export async function loadBrain(): Promise<BrainParts> {
   return cached;
 }
 
+export interface UserMessageParts {
+  /**
+   * Everything up to the buyer's questions: business name, knowledge base and
+   * coverage. Byte-stable between calls for the same business, so it can be
+   * sent as a cached content block.
+   */
+  stablePrefix: string;
+  /** The buyer's questions, the only part that varies per call. */
+  buyerQuestions: string;
+}
+
 /**
- * Fills the three placeholders in the context template with the per-business
- * facts and the buyer's questions, producing the user message content.
+ * Fills the placeholders in the context template, split at the buyer's
+ * questions so the stable half can be cached.
+ *
+ * replaceAll takes a function rather than a string so that `$&`, `$1` and
+ * friends inside a document are never interpreted as replacement patterns.
  */
 export function buildUserMessage(
   contextTemplate: string,
   businessName: string,
   knowledgeBase: string,
+  coverage: string,
   buyerQuestions: string,
-): string {
-  return contextTemplate
-    .replace("{{BUSINESS_NAME}}", businessName)
-    .replace("{{KNOWLEDGE_BASE}}", knowledgeBase)
-    .replace("{{BUYER_QUESTIONS}}", buyerQuestions);
+): UserMessageParts {
+  const marker = "{{BUYER_QUESTIONS}}";
+  const at = contextTemplate.indexOf(marker);
+  if (at === -1) {
+    throw new Error(`Hermes_Brain.md context template is missing ${marker}.`);
+  }
+
+  const stablePrefix = contextTemplate
+    .slice(0, at)
+    .replaceAll("{{BUSINESS_NAME}}", () => businessName)
+    .replaceAll("{{KNOWLEDGE_BASE}}", () => knowledgeBase)
+    .replaceAll("{{COVERAGE}}", () => coverage);
+
+  return { stablePrefix, buyerQuestions };
 }

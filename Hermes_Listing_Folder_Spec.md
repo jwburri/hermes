@@ -19,13 +19,17 @@ Two ways, same result:
 
 That is the whole process. No moving files, no developer, no deploy.
 
-## The folder must be buyer-safe (important)
+## Keeping legal documents away from Hermes (important)
 
-Point Hermes at a buyer-safe folder, not your full internal deal folder. Hermes reads every file in the folder you register and may use anything in it to answer a buyer. So the folder should contain only documents you are happy a buyer could be told about. This is the same curation you already do when you choose what goes into a Claude Project.
+Register the listing's deal folder. Hermes reads every file in it and in its subfolders, and may use anything it reads to answer a buyer. Three things keep the wrong documents out (decided 2026-09-08):
 
-The simplest way to guarantee this is a dedicated folder per listing (for example a "Hermes" subfolder inside the deal folder, or a separate clean folder) that holds only the buyer-safe documents. Register that folder's link, not the parent deal folder.
+1. **A `Legals` folder inside each listing folder.** Every agreement, LOI, counter-LOI, APA, term sheet and broker agreement goes in there and nowhere else. Hermes is hard-coded never to open a folder named Legal or Legals. Loose legal documents at the top level of the deal folder must be moved into it.
+2. **File-name patterns.** As a second net, Hermes skips any file or folder whose name contains LOI, APA, letter of intent, offer, counter, negotiation, contract, term sheet, heads of terms, broker, commission, engagement letter, call summary or outreach, wherever it sits.
+3. **The coverage panel.** Every answer in Hermes lists the files it read and the files it skipped with the reason. Check it when a listing is first registered, and glance at it if an answer looks off. A misfiled document shows up there immediately.
 
-**Keep these OUT of the registered folder:** the broker agreement, anything with commission or fee detail, your private notes and valuation working, the seller's real name and contact details, and any internal or draft documents. Even though the Brain is told never to reveal these, the safest design is to never put them in front of Hermes at all.
+The seller interview stays in the folder as it is. The Brain hides the seller's identity. The business's domain, brand, platforms and traffic sources are disclosable, because every buyer reaching Hermes has signed an NDA and already knows the business.
+
+Hermes is an internal tool: a team member reads every answer before a buyer sees it. Before buyers ever get direct access, the registered folder must become a dedicated buyer-safe folder rather than the deal folder.
 
 ## What goes in the folder
 
