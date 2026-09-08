@@ -56,14 +56,25 @@ export function streamAnswer(
     ttl: "1h",
   };
 
+  const model = config.anthropic.model();
+  // Haiku 4.5 has neither adaptive thinking nor effort, so run it plain. Keeps
+  // Hermes answering if an old ANTHROPIC_MODEL value is still set in Render.
+  const reasoning: Partial<Anthropic.MessageStreamParams> = model.includes(
+    "haiku",
+  )
+    ? {}
+    : {
+        thinking: { type: "adaptive" },
+        // The API validates the effort value; no local list to keep in sync.
+        output_config: {
+          effort: config.anthropic.effort() as Anthropic.OutputConfig["effort"],
+        },
+      };
+
   const stream = getClient().messages.stream({
-    model: config.anthropic.model(),
+    model,
     max_tokens: config.anthropic.maxTokens(),
-    thinking: { type: "adaptive" },
-    // The API validates the effort value; no local list to keep in sync.
-    output_config: {
-      effort: config.anthropic.effort() as Anthropic.OutputConfig["effort"],
-    },
+    ...reasoning,
     system: [{ type: "text", text: systemPrompt, cache_control: cache }],
     messages: [
       {
