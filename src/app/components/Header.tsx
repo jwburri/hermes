@@ -17,10 +17,12 @@ export function Header({ showNav = true }: { showNav?: boolean }) {
       <header className="app-header">
         <div className="w-full max-w-[760px] mx-auto flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3">
-            <span className="brand-mark" aria-hidden />
-            <span className="text-white" style={{ fontSize: 18, fontWeight: 500 }}>
-              Hermes
-            </span>
+            <Link href="/" className="flex items-center gap-3">
+              <span className="brand-mark" aria-hidden />
+              <span className="text-white" style={{ fontSize: 18, fontWeight: 500 }}>
+                Hermes
+              </span>
+            </Link>
             <span className="header-divider" aria-hidden />
             <span style={{ fontSize: 12, color: "var(--header-subtitle)" }}>
               Just Website Brokerage

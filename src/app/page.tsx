@@ -347,8 +347,8 @@ export default function Home() {
 
             {stopReason !== "refusal" && (
               <div
-                className="mt-5 pl-4 py-1"
-                style={{ borderLeft: "3px solid #d97706" }}
+                className="mt-5 rounded-lg p-4"
+                style={{ background: "#fdf3e0" }}
               >
                 <p className="field-label">Check before sending</p>
                 {!flags ? (
