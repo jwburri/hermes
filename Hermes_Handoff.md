@@ -35,20 +35,24 @@ Shipped and verified in production:
 - **Dependencies (9 Sep 2026).** Next.js 16.3.4, `xlsx` from the SheetJS registry, zero `npm audit` advisories.
 - **Phase B (10 Sep 2026).** Documents sent as citable blocks; a Sources panel shows where each claim came from. A second "verify" call re-reads the draft against the documents and lists unsupported claims and wrong buyer premises in an amber "Check before sending" panel. A "Notes for you" block after the buyer-facing answer for the team member only (corrections made, document conflicts, trends, referred questions). The last eight logged answers for the business are fed back in for consistency. Brain rewritten with the premise-check, period-label, discrepancy, other-buyers and pasted-thread rules.
 
-Not built yet: Phase C (attach files and images to a question, read image-only PDFs and PNGs from Drive, the referred-questions and seller-answer loop) and the rest of Phase D (regression script, login rate limiting, constant-time password compare). Scope for each is in `Hermes_V2_Plan.md` section 4.
+- **Phase C (10 Sep 2026).** Files can be attached to a question (up to five, 10 MB each: images, PDFs, spreadsheets, Word, text) and are read for that answer only, never stored. PNG, JPG, GIF and WEBP files in Drive, and PDFs that are only scans or screenshots, are now read visually; PDFs with real text still go through text extraction. Referred questions are pulled out of every answer and written to the Hermes Referred Questions table; a Referred questions screen records the seller's reply; resolved replies come back into every later answer as a document called "Confirmed answers from the seller".
+
+Not built yet: the rest of Phase D (regression script, login rate limiting, constant-time password compare). Scope is in `Hermes_V2_Plan.md` section 4.
 
 ## 4. How an answer is produced
 
 1. The team member picks a business. Its row in Hermes Listings holds the Drive folder link.
-2. `src/lib/drive.ts` walks that folder and its subfolders (three levels), fetching files in parallel, and extracts text: Google Docs and Slides as plain text, Google Sheets and Excel as one CSV block per tab with the tab name, PDFs via pdf-parse, Word via mammoth, plain text and Markdown as is. Drive comments on each file are appended. Files and folders matching the exclusion patterns are skipped and recorded. The result is cached in memory for five minutes per folder.
+2. `src/lib/drive.ts` walks that folder and its subfolders (three levels), fetching files in parallel, and turns each into a document: Google Docs and Slides as plain text, Google Sheets and Excel as one CSV block per tab with the tab name, PDFs via pdf-parse, Word via mammoth, plain text and Markdown as is. A PDF with little or no extractable text (a scan or screenshots) is sent as the PDF itself so the model reads the pages; PNG, JPG, GIF and WEBP files are sent as images with a label line naming the file. Drive comments on each file are appended (for a PDF or image, as a separate "(comments)" document). Files and folders matching the exclusion patterns are skipped and recorded, as are PDFs over 10 MB or 600 pages and images over 5 MB ("too large to read"). The result is cached in memory for five minutes per folder.
+2a. `src/lib/airtable.ts` loads the Resolved rows of Hermes Referred Questions for the business. If there are any they become one more document, "Confirmed answers from the seller", listed in the coverage panel like a file.
 3. `src/lib/brain.ts` splits `Hermes_Brain.md` into the system prompt and the context template and fills the placeholders.
-4. `src/lib/anthropic.ts` builds the request: the system prompt (cached, 1h), the template text before the documents, one `document` block per file with citations enabled, the coverage block (cached, 1h), then the uncached tail: prior answers and the buyer's questions. Adaptive thinking, effort from `ANTHROPIC_EFFORT`, `max_tokens` 32,000, streamed.
+4. `src/lib/anthropic.ts` builds the request: the system prompt (cached, 1h), the template text before the documents, one `document` block per file with citations enabled (images as a label plus an image block), the coverage block (cached, 1h), then the uncached tail: prior answers, the buyer's questions, and any files attached to this question (parsed by `src/lib/attachments.ts` into the same document shapes). Adaptive thinking, effort from `ANTHROPIC_EFFORT`, `max_tokens` 32,000, streamed.
 5. The reply is buyer-facing text, a line `---NOTES FOR YOU---`, then internal notes. The server streams the text as it arrives, then splits it.
-6. A second call, "verify mode", sends the same cached prefix with the draft answer and asks for JSON listing unsupported claims and uncorrected wrong premises. It never throws; if it fails the UI says the check did not run.
-7. The client receives newline-delimited JSON events in this order: `coverage` (files read and skipped), `text` deltas, `answer_end` (stop reason, sources), `flags` (verification result), `done` (token usage, model).
-8. `src/lib/airtable.ts` logs the row: business, questions, the buyer-facing answer, and (once the columns exist, see section 7) model, effort, files read, files skipped, truncated, stop reason, token counts, notes and flagged claims. If the extra columns are missing it retries with the four original fields, so logging never breaks an answer.
+6. A second call, "verify mode", sends the same cached prefix (and the same attachments) with the draft answer and asks for JSON listing unsupported claims and uncorrected wrong premises. It never throws; if it fails the UI says the check did not run.
+7. `src/lib/referred.ts` finds every numbered question whose answer contains the seller-referral line.
+8. The client receives newline-delimited JSON events in this order: `coverage` (files read and skipped, attachments read and ignored), `text` deltas, `answer_end` (stop reason, sources), `flags` (verification result), `referred` (the questions referred to the seller), `done` (token usage, model).
+9. `src/lib/airtable.ts` logs the row: business, questions (with an "[Attached: …]" line when files were read), the buyer-facing answer, and (once the columns exist, see section 7) model, effort, files read, files skipped, truncated, stop reason, token counts, notes and flagged claims. If the extra columns are missing it retries with the four original fields, so logging never breaks an answer. It then writes each referred question as an Open row in Hermes Referred Questions, skipping any whose wording already exists for that business. Both writes are best-effort and never break an answer.
 
-Cost with a warm cache is roughly $0.12 per question (two calls reading about 175K cached tokens each for a large listing, plus output). The first question on a business within an hour costs about $0.45 because it writes the cache. At current volume that is well under $20 a month.
+Cost with a warm cache is roughly $0.12 per question (two calls reading about 200K cached tokens each for Gronanda now that its screenshots and scanned PDFs are read, plus output). The first question on a business within an hour costs about $0.50 because it writes the cache. Saving a seller's answer changes the cached prefix, so the next question on that business rewrites the cache once. At current volume that is well under $20 a month.
 
 Timing with a warm cache: about 30 seconds for a small listing, about 60 seconds for Gronanda (49 documents). The verification call is 4 to 20 seconds of that.
 
@@ -57,13 +61,16 @@ Timing with a warm cache: about 30 seconds for a small listing, about 60 seconds
 All under `hermes-app/`.
 
 - `src/lib/config.ts` — every environment variable, read lazily. Non-numeric values fall back to defaults.
-- `src/lib/drive.ts` — Drive auth, folder walk, extraction, exclusions, coverage rendering, the five-minute cache. `EXCLUDE_PATTERNS` (files and folders) and `DEAL_FILE_PATTERNS` (file names only) are at the top.
+- `src/lib/drive.ts` — Drive auth, folder walk, extraction (text, native PDF, image), size caps, exclusions, coverage rendering, the five-minute cache. `EXCLUDE_PATTERNS` (files and folders) and `DEAL_FILE_PATTERNS` (file names only) are at the top, the size caps and the scanned-PDF threshold just below them.
+- `src/lib/attachments.ts` — turns a file uploaded with a question into the same document shape. `ATTACHMENT_LIMITS` (5 files, 10 MB each) is enforced by the route and mirrored in the page.
+- `src/lib/referred.ts` — pure helpers: find referred questions in an answer, normalise wording for dedupe, render confirmed seller answers. `scripts/check-referred.ts` is its self-check (`node scripts/check-referred.ts`).
 - `src/lib/brain.ts` — loads and splits `Hermes_Brain.md`; fills placeholders with `replaceAll` and a function so `$` in documents is never interpreted.
 - `src/lib/anthropic.ts` — the answer stream and the verify call, sharing one prompt object so the cache hits. Runs Haiku plainly (no thinking) if an old model name is ever configured.
-- `src/lib/airtable.ts` — registry read and write, archive, `recentAnswers`, `logSubmission` with fallback.
+- `src/lib/airtable.ts` — registry read and write, archive, `recentAnswers`, `logSubmission` with fallback, and the referred-questions table (`openReferred`, `resolveReferred`, `confirmedAnswers`, `addReferred`).
 - `src/lib/session.ts` and `src/proxy.ts` — signed session cookie and route protection. The proxy is the only auth gate; keep Next.js current.
-- `src/app/api/answer/route.ts` — the answer endpoint and event stream.
-- `src/app/page.tsx` — the main screen: answer, Notes for you, Check before sending, Sources, Documents Hermes read.
+- `src/app/api/answer/route.ts` — the answer endpoint and event stream. Accepts JSON (`{businessId, questions}`) or multipart form data (`businessId`, `questions`, repeated `files`).
+- `src/app/page.tsx` — the main screen: attach files, answer, Notes for you, Check before sending, Referred to the seller, Sources, Documents Hermes read.
+- `src/app/referred/page.tsx` and `src/app/api/referred` — the Referred questions screen (list Open rows, save the seller's answer).
 - `src/app/login`, `src/app/add-business`, `src/app/api/businesses` — login, registry management.
 - `render.yaml` — Render blueprint. Note that values set in the Render dashboard override it.
 - `next.config.ts` — `serverExternalPackages` for pdf-parse (its worker breaks when bundled), noindex headers.
@@ -82,6 +89,7 @@ All under `hermes-app/`.
 curl -s -c cookies.txt -H 'content-type: application/json' --data @login.json http://localhost:3000/api/login
 curl -s -b cookies.txt http://localhost:3000/api/businesses
 curl -s -N -b cookies.txt -H 'content-type: application/json' --data '{"businessId":"rec...","questions":"..."}' http://localhost:3000/api/answer
+curl -s -N -b cookies.txt -F businessId=rec... -F 'questions=...' -F files=@screenshot.png http://localhost:3000/api/answer
 ```
 
 The answer endpoint streams newline-delimited JSON; the last line is the `done` event.
@@ -94,7 +102,9 @@ The answer endpoint streams newline-delimited JSON; the last line is the `done` 
 
 - **Register the deal folder, keep legal documents in a `Legals` folder inside it.** Hermes never opens a folder named Legal or Legals. As a second net it skips any file whose name contains LOI, APA, letter of intent, negotiation, term sheet or heads of terms, plus the older patterns (broker, commission, engagement letter, call summary, asset purchase agreement, outreach). Gronanda is set up this way; the other listings still need their Legals folder created and loose legal documents moved in. Full rules in `Hermes_Listing_Folder_Spec.md`.
 - **Check the "Documents Hermes read" panel** the first time a listing is used, and whenever an answer looks thin. A file that is not in the list was not read, and the reason is shown.
-- **Formats Hermes cannot read:** Apple Numbers files, PNG and JPG images, and PDFs that are only screenshots. Export Numbers to Google Sheets or Excel. Image support is Phase C.
+- **Formats Hermes cannot read:** Apple Numbers files (export them to Google Sheets or Excel), HEIC or TIFF images, PDFs over 10 MB or 600 pages, images over 5 MB. PNG, JPG, GIF and WEBP images and scanned or screenshot PDFs are read since Phase C.
+- **Attach files to a question when the buyer sent something.** A screenshot of the buyer's email, a PDF or spreadsheet they sent, a photo. Hermes reads them as part of the buyer's message and checks any figures in them against the documents. They are used for that answer only and are not stored anywhere. Up to five files, 10 MB each.
+- **Work the Referred questions screen.** Every question Hermes referred to the seller appears there as an Open item. When the seller replies, paste the reply and save. From then on Hermes answers that question from the seller's reply, for every buyer, and cites "Confirmed answers from the seller". A question asked again in different words creates another Open item; resolve either. The fallback is filling Seller Answer and setting Status to Resolved in Airtable directly.
 - **The live P&L Google Sheet is the source of truth.** Analysis documents are not maintained and can drift; the verification pass will flag conflicts when they do.
 - **Read the Notes and the Check panel before sending.** Notes hold corrections and conflicts; the Check panel lists claims the checker could not support. Neither is for the buyer. "Copy answers" copies only the buyer-facing text.
 - **Add the eleven provenance columns to Hermes Q&A Log** (still outstanding): Model, Effort, Stop Reason (single line text); Files Read, Files Skipped, Hermes Notes, Flagged Claims (long text); Truncated (checkbox); Input Tokens, Cache Read Tokens, Output Tokens (number). Either add them by hand or give the Airtable token the `schema.bases:write` scope and have Claude Code create them. Until then only the four original fields are logged.
@@ -110,9 +120,8 @@ Team:
 
 Engineering, in order:
 
-1. Phase C: attachments on the question form (images, PDFs, spreadsheets sent as native blocks for that answer only); native PDF and image ingestion from Drive; the referred-questions and seller-answer loop into the Hermes Referred Questions table.
-2. Phase D remainder: regression script over the logged questions; login rate limiting and a constant-time password compare on `/api/login`.
-3. Before any buyer-facing access (Phase 2 of the original spec): the registered folder must become an allowlist folder, not the deal folder, and the coverage and sources data must be stripped from responses to buyers.
+1. Phase D remainder: regression script over the logged questions; login rate limiting and a constant-time password compare on `/api/login`.
+2. Before any buyer-facing access (Phase 2 of the original spec): the registered folder must become an allowlist folder, not the deal folder, and the coverage and sources data must be stripped from responses to buyers.
 
 ## 9. Traps already found
 
@@ -126,6 +135,8 @@ Engineering, in order:
 - **Error text must never enter the cached prompt prefix.** A varying error message in the coverage block invalidated the whole cache. Skip reasons are fixed strings; details go to the server log.
 - **Confidential file names must not reach the model.** The coverage block sent to the model omits excluded files; the UI still shows them because the team needs to see them.
 - **Airtable's API key cannot create fields** without the schema write scope.
+- **A saved seller answer, or any change to a listing's files, rewrites the prompt cache once.** Expected; the next question after it is the slow, cache-writing one.
+- **Size caps are checked against Drive's declared size before download**, so a huge file is never pulled into memory on Render's 512 MB instance. Google-native files report no size, but those are exported as text and bounded by the text caps.
 - **A loose service-account key file** sits at `Projects/Hermes/hermes-499709-*.json`. Its contents are already in `.env.local` and Render. Delete the file.
 
 ## 10. Which documents are current
