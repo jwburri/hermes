@@ -8,7 +8,7 @@
  * The file has two regions below the "SYSTEM PROMPT" marker:
  *   1. The instructions (identity, voice, answer rules, formatting). These become
  *      the system prompt.
- *   2. The "CONTEXT INJECTED BY THE APP" section, a template with four
+ *   2. The "CONTEXT INJECTED BY THE APP" section, a template with
  *      placeholders. We fill those and send the result as the user message.
  *
  * The parsed result is cached at module level, so the file is read once per
@@ -79,19 +79,21 @@ export async function loadBrain(): Promise<BrainParts> {
 }
 
 export interface UserMessageParts {
+  /** Template text up to {{KNOWLEDGE_BASE}}. Stable; precedes the documents. */
+  beforeDocs: string;
   /**
-   * Everything up to the buyer's questions: business name, knowledge base and
-   * coverage. Byte-stable between calls for the same business, so it can be
-   * sent as a cached content block.
+   * Template text between the documents and {{PRIOR_ANSWERS}} (the coverage
+   * lists). The last stable block, so this is where the cache breakpoint goes.
    */
-  stablePrefix: string;
-  /** The buyer's questions, the only part that varies per call. */
-  buyerQuestions: string;
+  afterDocs: string;
+  /** Prior answers and the buyer's questions: changes every call, never cached. */
+  tail: string;
 }
 
 /**
- * Fills the placeholders in the context template, split at the buyer's
- * questions so the stable half can be cached.
+ * Fills the placeholders in the context template and splits it into the three
+ * pieces the user message is assembled from: the text before the documents, the
+ * text after them (still stable, so still cacheable), and the uncached tail.
  *
  * replaceAll takes a function rather than a string so that `$&`, `$1` and
  * friends inside a document are never interpreted as replacement patterns.
@@ -99,21 +101,38 @@ export interface UserMessageParts {
 export function buildUserMessage(
   contextTemplate: string,
   businessName: string,
-  knowledgeBase: string,
   coverage: string,
+  priorAnswers: string,
   buyerQuestions: string,
 ): UserMessageParts {
-  const marker = "{{BUYER_QUESTIONS}}";
-  const at = contextTemplate.indexOf(marker);
-  if (at === -1) {
-    throw new Error(`Hermes_Brain.md context template is missing ${marker}.`);
+  const find = (marker: string): number => {
+    const at = contextTemplate.indexOf(marker);
+    if (at === -1) {
+      throw new Error(`Hermes_Brain.md context template is missing ${marker}.`);
+    }
+    return at;
+  };
+  const KB = "{{KNOWLEDGE_BASE}}";
+  const kbAt = find(KB);
+  const priorAt = find("{{PRIOR_ANSWERS}}");
+  const questionsAt = find("{{BUYER_QUESTIONS}}");
+  if (!(kbAt < priorAt && priorAt < questionsAt)) {
+    throw new Error(
+      "Hermes_Brain.md context template has its placeholders out of order: " +
+        `${KB} must come before {{PRIOR_ANSWERS}}, which must come before {{BUYER_QUESTIONS}}.`,
+    );
   }
 
-  const stablePrefix = contextTemplate
-    .slice(0, at)
-    .replaceAll("{{BUSINESS_NAME}}", () => businessName)
-    .replaceAll("{{KNOWLEDGE_BASE}}", () => knowledgeBase)
-    .replaceAll("{{COVERAGE}}", () => coverage);
-
-  return { stablePrefix, buyerQuestions };
+  return {
+    beforeDocs: contextTemplate
+      .slice(0, kbAt)
+      .replaceAll("{{BUSINESS_NAME}}", () => businessName),
+    afterDocs: contextTemplate
+      .slice(kbAt + KB.length, priorAt)
+      .replaceAll("{{COVERAGE}}", () => coverage),
+    tail: contextTemplate
+      .slice(priorAt)
+      .replaceAll("{{PRIOR_ANSWERS}}", () => priorAnswers)
+      .replaceAll("{{BUYER_QUESTIONS}}", () => buyerQuestions),
+  };
 }

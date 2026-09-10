@@ -15,12 +15,30 @@ interface Coverage {
   truncated: boolean;
 }
 
+interface Source {
+  text: string;
+  title: string;
+  cited: string;
+}
+
+interface Flags {
+  unsupported: { claim: string; why: string }[];
+  premise: { buyer_said: string; documents_say: string }[];
+  verdict: string;
+  error?: string;
+}
+
+// Everything after this line in the reply is for the JWB team, not the buyer.
+const NOTES_DELIMITER = "---NOTES FOR YOU---";
+
 export default function Home() {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [businessId, setBusinessId] = useState("");
   const [questions, setQuestions] = useState("");
   const [answer, setAnswer] = useState("");
   const [coverage, setCoverage] = useState<Coverage | null>(null);
+  const [sources, setSources] = useState<Source[]>([]);
+  const [flags, setFlags] = useState<Flags | null>(null);
   const [stopReason, setStopReason] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -42,6 +60,8 @@ export default function Home() {
     setError("");
     setAnswer("");
     setCoverage(null);
+    setSources([]);
+    setFlags(null);
     setStopReason("");
     setCopied(false);
     setLoading(true);
@@ -76,8 +96,13 @@ export default function Home() {
           setAnswer(acc);
         } else if (event.type === "coverage") {
           setCoverage(event);
-        } else if (event.type === "done") {
+        } else if (event.type === "answer_end") {
+          setSources(event.sources ?? []);
           setStopReason(event.stopReason ?? "");
+        } else if (event.type === "flags") {
+          setFlags(event);
+        } else if (event.type === "done") {
+          if (event.stopReason) setStopReason(event.stopReason);
         }
       };
       for (;;) {
@@ -99,10 +124,23 @@ export default function Home() {
   }
 
   async function handleCopy() {
-    await navigator.clipboard.writeText(answer);
+    await navigator.clipboard.writeText(buyerAnswer);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
+
+  // The delimiter and the notes must never reach the buyer, so the answer area
+  // and "Copy answers" only ever see the half above it.
+  const delimiterAt = answer.indexOf(NOTES_DELIMITER);
+  const buyerAnswer =
+    delimiterAt === -1 ? answer : answer.slice(0, delimiterAt).trimEnd();
+  const notes =
+    delimiterAt === -1
+      ? ""
+      : answer.slice(delimiterAt + NOTES_DELIMITER.length).trim();
+  const flagged = flags
+    ? flags.unsupported.length + flags.premise.length
+    : 0;
 
   const canSubmit = !loading && !!businessId && questions.trim().length > 0;
 
@@ -160,7 +198,7 @@ export default function Home() {
               </span>
               <button
                 onClick={handleCopy}
-                disabled={!answer}
+                disabled={!buyerAnswer}
                 className="btn-outline"
               >
                 {copied ? "Copied" : "Copy answers"}
@@ -183,8 +221,78 @@ export default function Home() {
             <div className="answer-text">
               {stopReason === "refusal"
                 ? "Hermes could not answer this request."
-                : answer || "…"}
+                : buyerAnswer || "…"}
             </div>
+
+            {notes && stopReason !== "refusal" && (
+              <div
+                className="mt-5 rounded-lg p-4"
+                style={{ background: "var(--page-bg)" }}
+              >
+                <p className="field-label">Notes for you (not for the buyer)</p>
+                <div className="answer-text">{notes}</div>
+              </div>
+            )}
+
+            {stopReason !== "refusal" && (
+              <div
+                className="mt-5 pl-4 py-1"
+                style={{ borderLeft: "3px solid #d97706" }}
+              >
+                <p className="field-label">Check before sending</p>
+                {!flags ? (
+                  <p className="text-sm">
+                    {loading
+                      ? "Checking the answer against the documents…"
+                      : "The check did not run. Read the answer against the documents yourself."}
+                  </p>
+                ) : flags.error ? (
+                  <p className="text-sm">
+                    The check did not run. Read the answer against the documents
+                    yourself.
+                  </p>
+                ) : flagged === 0 ? (
+                  <p className="text-sm">
+                    {flags.verdict === "ok"
+                      ? "Nothing flagged."
+                      : "Nothing specific flagged, but the check was not confident. Read it once more."}
+                  </p>
+                ) : (
+                  <ul className="text-sm space-y-2">
+                    {flags.unsupported.map((u, i) => (
+                      <li key={`u${i}`}>
+                        &ldquo;{u.claim}&rdquo; — {u.why}
+                      </li>
+                    ))}
+                    {flags.premise.map((p, i) => (
+                      <li key={`p${i}`}>
+                        Buyer said &ldquo;{p.buyer_said}&rdquo;. Documents say:{" "}
+                        {p.documents_say}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {sources.length > 0 && (
+              <details className="mt-5 text-[13px]">
+                <summary className="cursor-pointer">
+                  Sources ({sources.length})
+                </summary>
+                <ul className="mt-2 space-y-2">
+                  {sources.map((s, i) => (
+                    <li key={`s${i}`}>
+                      <span className="text-[15px]">{s.text}</span>
+                      <br />
+                      <span style={{ color: "var(--muted)" }}>
+                        {s.title}: {s.cited}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
 
             {coverage && (
               <details className="mt-5 text-[13px]" style={{ color: "var(--muted)" }}>

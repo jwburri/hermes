@@ -74,9 +74,16 @@ export interface FileSkipped {
   reason: string;
 }
 
-export interface KnowledgeBase {
-  /** The concatenated, labelled text of every readable file. */
+export interface Doc {
+  /** The file name, used as the document title the model can cite. */
+  title: string;
+  /** The file's extracted text plus any Drive comments on it. */
   text: string;
+}
+
+export interface KnowledgeBase {
+  /** One citable document per file read, in Drive's sorted order. */
+  docs: Doc[];
   /** Files successfully read. */
   filesRead: FileRead[];
   /** Files skipped (e.g. image-only, unreadable, excluded) with a reason. */
@@ -365,11 +372,11 @@ async function collect(id: string, depth: number): Promise<Item[]> {
   return nested.flat();
 }
 
-/** Concatenate the collected files with filename labels, applying the size caps. */
+/** Collect the readable files as citable documents, applying the size caps. */
 async function buildKnowledgeBase(folderId: string): Promise<KnowledgeBase> {
   const filesRead: FileRead[] = [];
   const filesSkipped: FileSkipped[] = [];
-  const sections: string[] = [];
+  const docs: Doc[] = [];
   let totalChars = 0;
   let truncated = false;
 
@@ -378,8 +385,7 @@ async function buildKnowledgeBase(folderId: string): Promise<KnowledgeBase> {
       filesSkipped.push(item);
       continue;
     }
-    const section = `===== FILE: ${item.name} =====\n${item.text}`;
-    if (totalChars + section.length > MAX_KB_CHARS) {
+    if (totalChars + item.text.length > MAX_KB_CHARS) {
       truncated = true;
       filesSkipped.push({
         name: item.name,
@@ -388,12 +394,12 @@ async function buildKnowledgeBase(folderId: string): Promise<KnowledgeBase> {
       continue;
     }
     if (item.cut) truncated = true;
-    sections.push(section);
+    docs.push({ title: item.name, text: item.text });
     filesRead.push({ name: item.name, modified: item.modified });
-    totalChars += section.length;
+    totalChars += item.text.length;
   }
 
-  return { text: sections.join("\n"), filesRead, filesSkipped, truncated };
+  return { docs, filesRead, filesSkipped, truncated };
 }
 
 // ponytail: per-process in-memory cache; move to a shared store if Hermes ever

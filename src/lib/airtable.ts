@@ -91,6 +91,51 @@ export async function archiveListing(id: string): Promise<void> {
   ]);
 }
 
+/** One earlier answer for this business, fed back in as {{PRIOR_ANSWERS}}. */
+export interface PriorAnswer {
+  /** yyyy-mm-dd. */
+  when: string;
+  questions: string;
+  answer: string;
+}
+
+// Prior answers are context, not the source of truth, so they are capped.
+const PRIOR_FIELD_CHARS = 1200;
+
+/**
+ * The most recent logged Q&A for a business, newest first, so Hermes stays
+ * consistent with what buyers have already been told. Best-effort: on any
+ * failure this returns nothing rather than blocking the answer.
+ */
+export async function recentAnswers(
+  businessName: string,
+  limit = 8,
+): Promise<PriorAnswer[]> {
+  try {
+    const name = businessName.replace(/'/g, "\\'");
+    const records = await base()(config.airtable.logTable())
+      .select({
+        filterByFormula: `{Business} = '${name}'`,
+        sort: [{ field: "Timestamp", direction: "desc" }],
+        fields: ["Buyer Questions", "Hermes Answer", "Timestamp"],
+        maxRecords: limit,
+      })
+      .all();
+
+    const cut = (value: unknown) =>
+      String(value ?? "").slice(0, PRIOR_FIELD_CHARS);
+
+    return records.map((r) => ({
+      when: String(r.get("Timestamp") ?? "").slice(0, 10),
+      questions: cut(r.get("Buyer Questions")),
+      answer: cut(r.get("Hermes Answer")),
+    }));
+  } catch (err) {
+    console.error("Could not load prior answers:", err);
+    return [];
+  }
+}
+
 /** The run detail written alongside the answer, for internal review. */
 export interface AnswerLogMeta {
   model: string;
@@ -102,6 +147,10 @@ export interface AnswerLogMeta {
   inputTokens: number;
   cacheReadTokens: number;
   outputTokens: number;
+  /** The internal notes half of the reply (never shown to the buyer). */
+  notes: string;
+  /** The verification pass rendered for a human to read. */
+  flaggedClaims: string;
 }
 
 /**
@@ -142,6 +191,8 @@ export async function logSubmission(
       .join("\n"),
     Truncated: meta.truncated,
     "Stop Reason": meta.stopReason,
+    "Hermes Notes": meta.notes,
+    "Flagged Claims": meta.flaggedClaims,
     "Input Tokens": meta.inputTokens,
     "Cache Read Tokens": meta.cacheReadTokens,
     "Output Tokens": meta.outputTokens,
