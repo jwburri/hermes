@@ -37,7 +37,9 @@ Shipped and verified in production:
 
 - **Phase C (10 Sep 2026).** Files can be attached to a question (up to five, 10 MB each: images, PDFs, spreadsheets, Word, text) and are read for that answer only, never stored. PNG, JPG, GIF and WEBP files in Drive, and PDFs that are only scans or screenshots, are now read visually; PDFs with real text still go through text extraction. Referred questions are pulled out of every answer and written to the Hermes Referred Questions table; a Referred questions screen records the seller's reply; resolved replies come back into every later answer as a document called "Confirmed answers from the seller".
 
-Not built yet: the rest of Phase D (regression script, login rate limiting, constant-time password compare). Scope is in `Hermes_V2_Plan.md` section 4.
+- **Phase D (10 Sep 2026).** A regression runner (`scripts/regress.ts`) replays sixteen real buyer questions from the log across the active listings, runs two of them twice for consistency, and writes a Markdown report; a `dryRun` flag keeps it out of the log and the referred table. A "Re-read the documents from Drive first" tick on the form bypasses the five-minute cache. Login now uses a constant-time password compare and blocks an IP for fifteen minutes after five failed attempts. Hermes refuses to answer when it could read no documents at all, instead of answering from prior answers.
+
+V2 is complete. What remains is Aiman's review and, after it, the graded question set (section 8).
 
 ## 4. How an answer is produced
 
@@ -64,11 +66,13 @@ All under `hermes-app/`.
 - `src/lib/drive.ts` — Drive auth, folder walk, extraction (text, native PDF, image), size caps, exclusions, coverage rendering, the five-minute cache. `EXCLUDE_PATTERNS` (files and folders) and `DEAL_FILE_PATTERNS` (file names only) are at the top, the size caps and the scanned-PDF threshold just below them.
 - `src/lib/attachments.ts` — turns a file uploaded with a question into the same document shape. `ATTACHMENT_LIMITS` (5 files, 10 MB each) is enforced by the route and mirrored in the page.
 - `src/lib/referred.ts` — pure helpers: find referred questions in an answer, normalise wording for dedupe, render confirmed seller answers. `scripts/check-referred.ts` is its self-check (`node scripts/check-referred.ts`).
+- `scripts/regress.ts`, `scripts/regress-lib.ts`, `scripts/regress-set.json`, `scripts/fixtures/` — the regression runner, its pure parts (`scripts/check-regress.ts` checks them), the cases and the screenshot fixture.
 - `src/lib/brain.ts` — loads and splits `Hermes_Brain.md`; fills placeholders with `replaceAll` and a function so `$` in documents is never interpreted.
 - `src/lib/anthropic.ts` — the answer stream and the verify call, sharing one prompt object so the cache hits. Runs Haiku plainly (no thinking) if an old model name is ever configured.
 - `src/lib/airtable.ts` — registry read and write, archive, `recentAnswers`, `logSubmission` with fallback, and the referred-questions table (`openReferred`, `resolveReferred`, `confirmedAnswers`, `addReferred`).
 - `src/lib/session.ts` and `src/proxy.ts` — signed session cookie and route protection. The proxy is the only auth gate; keep Next.js current.
-- `src/app/api/answer/route.ts` — the answer endpoint and event stream. Accepts JSON (`{businessId, questions}`) or multipart form data (`businessId`, `questions`, repeated `files`).
+- `src/app/api/answer/route.ts` — the answer endpoint and event stream. Accepts JSON (`{businessId, questions}`) or multipart form data (`businessId`, `questions`, repeated `files`), plus the optional `dryRun` and `refresh` flags.
+- `src/app/api/login/route.ts` — password check (constant-time) and the per-IP failed-attempt limit (in memory, per process).
 - `src/app/page.tsx` — the main screen: attach files, answer, Notes for you, Check before sending, Referred to the seller, Sources, Documents Hermes read.
 - `src/app/referred/page.tsx` and `src/app/api/referred` — the Referred questions screen (list Open rows, save the seller's answer).
 - `src/app/login`, `src/app/add-business`, `src/app/api/businesses` — login, registry management.
@@ -80,6 +84,14 @@ All under `hermes-app/`.
 **Deploy:** push to `main`. Render builds and deploys in five to eight minutes. Watch the Render dashboard for "Your service is live".
 
 **Roll back:** `git revert <commit>` and push. Render deploys the revert.
+
+**Regression run (before any brain or model change):** with a server running (local or `HERMES_BASE=https://hermes.justwebsitebrokerage.com`), from `hermes-app`:
+
+```bash
+node scripts/regress.ts
+```
+
+Options: `--only Gronanda`, `--case 9`. It logs in with the password from `.env.local`, sends every case with `dryRun` so nothing is written to Airtable, and writes `scripts/regress-out/<date>.md` (git-ignored) with a summary table and every answer, its notes, its flags and the referred questions. Exit code 1 if any answer was cut off, errored, or the check did not run. The cases live in `scripts/regress-set.json`; add to them as new question types appear. Cost is about $2 to $3 a run.
 
 **Run locally:** load Node via nvm (`export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"`), then in `hermes-app`: `npm install`, `npm run build`, `npm start`, open http://localhost:3000. On Joe's 8 GB Mac `npm run dev` is unusably slow (tens of minutes per request); build and start instead. A Claude Code launch entry named `hermes-start` does this.
 
@@ -120,7 +132,7 @@ Team:
 
 Engineering, in order:
 
-1. Phase D remainder: regression script over the logged questions; login rate limiting and a constant-time password compare on `/api/login`.
+1. After Aiman's review: the graded set (10 to 15 questions with known-correct answers) added to `scripts/regress-set.json` with expected figures, so the runner can score as well as check.
 2. Before any buyer-facing access (Phase 2 of the original spec): the registered folder must become an allowlist folder, not the deal folder, and the coverage and sources data must be stripped from responses to buyers.
 
 ## 9. Traps already found
@@ -138,6 +150,9 @@ Engineering, in order:
 - **A saved seller answer, or any change to a listing's files, rewrites the prompt cache once.** Expected; the next question after it is the slow, cache-writing one.
 - **Size caps are checked against Drive's declared size before download**, so a huge file is never pulled into memory on Render's 512 MB instance. Google-native files report no size, but those are exported as text and bounded by the text caps.
 - **A loose service-account key file** sits at `Projects/Hermes/hermes-499709-*.json`. Its contents are already in `.env.local` and Render. Delete the file.
+- **Drive returns an empty list, not an error, for a folder the service account cannot see.** On 10 Sep the service account (`hermes-reader@hermes-499709.iam.gserviceaccount.com`) lost its membership of the shared drive and Hermes read zero documents for every listing without any error. The app now refuses to answer in that case ("could not read any documents"). If that message appears for every business, re-add the service account as a Viewer on the shared drive. The five-minute cache never keeps an empty read, so the next question retries.
+- **The workspace sits in an iCloud-synced Desktop folder.** iCloud creates `name 2` duplicate files on conflicts and has put them inside `.git` (breaking fetch with "bad object"), `.next` (breaking the type check) and `node_modules`. Delete them (`find . -name '* [0-9]' -o -name '* [0-9].*'`) or move the code out of iCloud sync (a folder named `*.nosync` is skipped).
+- **Render env vars are the live values.** `ANTHROPIC_MAX_TOKENS` was still 3,500 in the dashboard after Phases A to C; hard questions hit it during thinking and came back empty. Set to 32,000 on 10 Sep.
 
 ## 10. Which documents are current
 
