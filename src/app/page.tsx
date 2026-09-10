@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Header } from "./components/Header";
 import { Footer } from "./components/Footer";
 
@@ -31,12 +32,26 @@ interface Flags {
 // Everything after this line in the reply is for the JWB team, not the buyer.
 const NOTES_DELIMITER = "---NOTES FOR YOU---";
 
+// Mirrors ATTACHMENT_LIMITS in src/lib/attachments.ts; the route enforces it.
+const MAX_FILES = 5;
+const MAX_BYTES = 10 * 1024 * 1024;
+
+function fileSize(bytes: number): string {
+  return bytes >= 1024 * 1024
+    ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
+    : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
 export default function Home() {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [businessId, setBusinessId] = useState("");
   const [questions, setQuestions] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
   const [answer, setAnswer] = useState("");
   const [coverage, setCoverage] = useState<Coverage | null>(null);
+  const [attachmentsRead, setAttachmentsRead] = useState<string[]>([]);
+  const [attachmentsIgnored, setAttachmentsIgnored] = useState<string[]>([]);
+  const [referred, setReferred] = useState<string[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [flags, setFlags] = useState<Flags | null>(null);
   const [stopReason, setStopReason] = useState("");
@@ -64,13 +79,17 @@ export default function Home() {
     setFlags(null);
     setStopReason("");
     setCopied(false);
+    setAttachmentsRead([]);
+    setAttachmentsIgnored([]);
+    setReferred([]);
     setLoading(true);
     try {
-      const res = await fetch("/api/answer", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ businessId, questions }),
-      });
+      const form = new FormData();
+      form.append("businessId", businessId);
+      form.append("questions", questions);
+      files.forEach((f) => form.append("files", f));
+      // Let the browser set the multipart boundary; never set content-type.
+      const res = await fetch("/api/answer", { method: "POST", body: form });
 
       if (!res.ok || !res.body) {
         const data = await res.json().catch(() => ({}));
@@ -96,6 +115,10 @@ export default function Home() {
           setAnswer(acc);
         } else if (event.type === "coverage") {
           setCoverage(event);
+          setAttachmentsRead(event.attachmentsRead ?? []);
+          setAttachmentsIgnored(event.attachmentsIgnored ?? []);
+        } else if (event.type === "referred") {
+          setReferred(event.questions ?? []);
         } else if (event.type === "answer_end") {
           setSources(event.sources ?? []);
           setStopReason(event.stopReason ?? "");
@@ -119,6 +142,9 @@ export default function Home() {
     } catch {
       setError("Something went wrong while getting answers.");
     } finally {
+      // Always drop the attachments, so a stale screenshot can never ride
+      // along with the next question.
+      setFiles([]);
       setLoading(false);
     }
   }
@@ -142,7 +168,15 @@ export default function Home() {
     ? flags.unsupported.length + flags.premise.length
     : 0;
 
-  const canSubmit = !loading && !!businessId && questions.trim().length > 0;
+  const fileError =
+    files.length > MAX_FILES
+      ? `Attach at most ${MAX_FILES} files.`
+      : files.some((f) => f.size > MAX_BYTES)
+        ? "Each file must be under 10 MB."
+        : "";
+
+  const canSubmit =
+    !loading && !!businessId && questions.trim().length > 0 && !fileError;
 
   return (
     <>
@@ -181,6 +215,54 @@ export default function Home() {
             className="input mb-4"
             style={{ resize: "vertical" }}
           />
+
+          <label className="field-label" htmlFor="files">
+            Attach files (optional)
+          </label>
+          <input
+            id="files"
+            type="file"
+            multiple
+            accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.xlsx,.xls,.csv,.docx,.txt,.md"
+            onChange={(e) => {
+              setFiles((prev) => [...prev, ...Array.from(e.target.files ?? [])]);
+              // Clear it so re-picking the same file still fires a change.
+              e.target.value = "";
+            }}
+            className="input mb-3"
+          />
+
+          {files.length > 0 && (
+            <ul className="mb-3 space-y-2">
+              {files.map((f, i) => (
+                <li
+                  key={`${i}-${f.name}`}
+                  className="flex items-center justify-between gap-3 text-sm"
+                >
+                  <span>
+                    {f.name}{" "}
+                    <span style={{ color: "var(--muted)" }}>
+                      ({fileSize(f.size)})
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFiles((prev) => prev.filter((_, at) => at !== i))
+                    }
+                    className="btn-outline"
+                    style={{ padding: "2px 10px", fontSize: 13 }}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {fileError && (
+            <p className="text-sm text-red-600 mb-3">{fileError}</p>
+          )}
 
           <button type="submit" disabled={!canSubmit} className="btn-primary">
             {loading && <span className="spinner" aria-hidden />}
@@ -224,6 +306,12 @@ export default function Home() {
                 : buyerAnswer || "…"}
             </div>
 
+            {attachmentsIgnored.length > 0 && (
+              <p className="mt-3 text-[13px]" style={{ color: "var(--muted)" }}>
+                Could not read: {attachmentsIgnored.join(", ")}
+              </p>
+            )}
+
             {notes && stopReason !== "refusal" && (
               <div
                 className="mt-5 rounded-lg p-4"
@@ -231,6 +319,29 @@ export default function Home() {
               >
                 <p className="field-label">Notes for you (not for the buyer)</p>
                 <div className="answer-text">{notes}</div>
+              </div>
+            )}
+
+            {referred.length > 0 && (
+              <div
+                className="mt-5 rounded-lg p-4"
+                style={{ background: "var(--page-bg)" }}
+              >
+                <p className="field-label">
+                  Referred to the seller ({referred.length})
+                </p>
+                <ul className="text-sm space-y-1">
+                  {referred.map((q, i) => (
+                    <li key={`r${i}`}>{q}</li>
+                  ))}
+                </ul>
+                <p className="text-sm mt-3" style={{ color: "var(--muted)" }}>
+                  These are on the{" "}
+                  <Link href="/referred" className="underline">
+                    Referred questions
+                  </Link>{" "}
+                  list. Add the seller&apos;s answer there when it comes back.
+                </p>
               </div>
             )}
 
@@ -306,6 +417,18 @@ export default function Home() {
                     </li>
                   ))}
                 </ul>
+                {attachmentsRead.length > 0 && (
+                  <>
+                    <p className="mt-3">
+                      Attached with this question ({attachmentsRead.length})
+                    </p>
+                    <ul className="mt-2 space-y-1">
+                      {attachmentsRead.map((name, i) => (
+                        <li key={`a${i}-${name}`}>{name}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
                 {coverage.filesSkipped.length > 0 && (
                   <>
                     <p className="mt-3">

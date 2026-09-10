@@ -8,6 +8,7 @@
 
 import Airtable from "airtable";
 import { config } from "./config";
+import { normaliseQuestion } from "./referred";
 
 export interface Listing {
   id: string;
@@ -203,5 +204,157 @@ export async function logSubmission(
   } catch (err) {
     console.error("Q&A log write failed, retrying without meta columns:", err);
     await table.create([{ fields: core }]);
+  }
+}
+
+/** Escape a value for use inside an Airtable formula string literal. */
+function escapeFormula(value: string): string {
+  return value.replace(/'/g, "\\'");
+}
+
+/** Airtable batch create/update size limit. */
+const AIRTABLE_BATCH_SIZE = 10;
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** One row from the Hermes Referred Questions table (Build Spec: referrals). */
+export interface ReferredQuestion {
+  id: string;
+  business: string;
+  question: string;
+  created: string;
+}
+
+/**
+ * Open referred questions, optionally for one business, newest first. Used
+ * by the /referred screen.
+ */
+export async function openReferred(
+  businessName?: string,
+): Promise<ReferredQuestion[]> {
+  const clauses = ["{Status} = 'Open'"];
+  if (businessName) {
+    clauses.push(`{Business} = '${escapeFormula(businessName)}'`);
+  }
+  const filterByFormula =
+    clauses.length === 1 ? clauses[0] : `AND(${clauses.join(", ")})`;
+
+  const records = await base()(config.airtable.referredTable())
+    .select({
+      filterByFormula,
+      sort: [{ field: "Created", direction: "desc" }],
+    })
+    .all();
+
+  return records.map((r) => ({
+    id: r.id,
+    business: (r.get("Business") as string) ?? "",
+    question: (r.get("Question") as string) ?? "",
+    created: (r.get("Created") as string) ?? "",
+  }));
+}
+
+/**
+ * Record the seller's reply to one referred question: fills in the answer,
+ * marks it Resolved, and stamps today's date. Throws on failure so the API
+ * route can report it — unlike the best-effort reads, a save the team
+ * clicked on must not silently vanish.
+ */
+export async function resolveReferred(
+  id: string,
+  sellerAnswer: string,
+): Promise<void> {
+  await base()(config.airtable.referredTable()).update([
+    {
+      id,
+      fields: {
+        "Seller Answer": sellerAnswer,
+        Status: "Resolved",
+        "Resolved On": today(),
+      },
+    },
+  ]);
+}
+
+// Confirmed answers are context fed back into future prompts, so they are capped.
+const CONFIRMED_ANSWERS_LIMIT = 50;
+
+/**
+ * Resolved rows with a confirmed seller answer for a business, oldest first,
+ * fed back in as {{CONFIRMED_ANSWERS}}. Best-effort: on any failure this
+ * returns nothing rather than blocking the answer.
+ */
+export async function confirmedAnswers(
+  businessName: string,
+): Promise<{ question: string; answer: string; resolvedOn: string }[]> {
+  try {
+    const name = escapeFormula(businessName);
+    const records = await base()(config.airtable.referredTable())
+      .select({
+        filterByFormula: `AND({Business} = '${name}', {Status} = 'Resolved', {Seller Answer} != '')`,
+        sort: [{ field: "Resolved On", direction: "asc" }],
+        fields: ["Question", "Seller Answer", "Resolved On"],
+        maxRecords: CONFIRMED_ANSWERS_LIMIT,
+      })
+      .all();
+
+    return records.map((r) => ({
+      question: (r.get("Question") as string) ?? "",
+      answer: (r.get("Seller Answer") as string) ?? "",
+      resolvedOn: (r.get("Resolved On") as string) ?? "",
+    }));
+  } catch (err) {
+    console.error("Could not load confirmed answers:", err);
+    return [];
+  }
+}
+
+/**
+ * Record newly referred questions for a business, skipping any that already
+ * exist (open or resolved) for it. Best-effort: on any failure this logs and
+ * returns none added rather than blocking the answer.
+ */
+export async function addReferred(
+  businessName: string,
+  questions: string[],
+): Promise<string[]> {
+  try {
+    const name = escapeFormula(businessName);
+    const existing = await base()(config.airtable.referredTable())
+      .select({
+        filterByFormula: `{Business} = '${name}'`,
+        fields: ["Question"],
+      })
+      .all();
+
+    const existingKeys = new Set(
+      existing.map((r) => normaliseQuestion((r.get("Question") as string) ?? "")),
+    );
+
+    const toAdd = questions.filter(
+      (q) => !existingKeys.has(normaliseQuestion(q)),
+    );
+    if (toAdd.length === 0) return [];
+
+    const created = today();
+    const table = base()(config.airtable.referredTable());
+    for (let i = 0; i < toAdd.length; i += AIRTABLE_BATCH_SIZE) {
+      const batch = toAdd.slice(i, i + AIRTABLE_BATCH_SIZE).map((question) => ({
+        fields: {
+          Business: businessName,
+          Question: question,
+          Status: "Open",
+          Created: created,
+        },
+      }));
+      await table.create(batch);
+    }
+
+    return toAdd;
+  } catch (err) {
+    console.error("Could not add referred questions:", err);
+    return [];
   }
 }

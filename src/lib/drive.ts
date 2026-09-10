@@ -2,13 +2,16 @@
  * Google Drive document ingestion (Build Spec §7).
  *
  * Reads every file in a business's registered (buyer-safe) Drive folder through
- * a read-only service account and extracts plain text from each, building the
- * {{KNOWLEDGE_BASE}} block. Files stay in Drive; nothing is copied or stored.
+ * a read-only service account and turns each into a citable document, building
+ * the {{KNOWLEDGE_BASE}} block. Three kinds come out: extracted text, native
+ * PDFs (scanned or screenshot PDFs the model reads visually) and images. Files
+ * stay in Drive; nothing is copied or stored.
  */
 
 import { google, drive_v3 } from "googleapis";
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
+import type { Doc } from "./anthropic";
 import { config } from "./config";
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
@@ -16,10 +19,42 @@ const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 // Rough guard: ~4 chars per token, model holds ~150k words (~200k tokens).
 // Stop well short so a request never fails for size (Build Spec §7).
 const MAX_KB_CHARS = 600_000;
-// No single file may swamp the knowledge base. Anything longer is truncated.
+// No single file may swamp the knowledge base. Text only; anything longer is
+// truncated.
 const MAX_FILE_CHARS = 300_000;
 // How deep to walk subfolders inside the registered folder.
 const MAX_DEPTH = 3;
+
+// Native PDFs and images are sent as base64. The API request limit is 32 MB;
+// stop well short of it across all of them.
+const MAX_PAYLOAD_BYTES = 20 * 1024 * 1024;
+const MAX_PDF_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+// Claude reads at most 600 PDF pages per document on the 1M-context model.
+const MAX_PDF_PAGES = 600;
+// Below this much extracted text per page a PDF is a scan or screenshots, so
+// it is worth the tokens to have the model read the pages visually instead.
+const MIN_PDF_TEXT_PER_PAGE = 200;
+// Size-budget weights: a visual page costs far more than its bytes suggest.
+const PDF_PAGE_CHARS = 8_000;
+const IMAGE_CHARS = 6_000;
+
+/** The one reason string for anything past a per-file size cap. */
+const TOO_LARGE_REASON = "too large to read";
+
+/** Base64 inflates by 4/3; count what will actually be sent. */
+function base64Bytes(byteLength: number): number {
+  return Math.ceil(byteLength / 3) * 4;
+}
+
+/**
+ * Drive's declared size, checked before the download so an oversized file is
+ * never pulled into memory. Uploaded binaries always report one; anything that
+ * does not is still bounded by the total payload cap.
+ */
+function tooBig(file: drive_v3.Schema$File, max: number): boolean {
+  return Number(file.size ?? 0) > max;
+}
 
 // Confidential files Hermes must NEVER read, matched on file/folder name
 // (case-insensitive). This is a hard, deterministic exclusion — the bytes never
@@ -74,15 +109,12 @@ export interface FileSkipped {
   reason: string;
 }
 
-export interface Doc {
-  /** The file name, used as the document title the model can cite. */
-  title: string;
-  /** The file's extracted text plus any Drive comments on it. */
-  text: string;
-}
-
 export interface KnowledgeBase {
-  /** One citable document per file read, in Drive's sorted order. */
+  /**
+   * The files read, in Drive's sorted order: extracted text, a native PDF or an
+   * image, each titled with its file name. A pdf/image with Drive comments is
+   * followed by a "<name> (comments)" text doc carrying them.
+   */
   docs: Doc[];
   /** Files successfully read. */
   filesRead: FileRead[];
@@ -214,7 +246,7 @@ async function fetchComments(fileId: string): Promise<string> {
  * readable (2024-03-01) instead of Excel serials (45352), and blankrows drops
  * rows that are entirely empty.
  */
-function xlsxToText(buffer: Buffer): string {
+export function xlsxToText(buffer: Buffer): string {
   const wb = XLSX.read(buffer, {
     type: "buffer",
     cellDates: true,
@@ -238,62 +270,100 @@ async function exportBuffer(fileId: string, mimeType: string): Promise<Buffer> {
   return Buffer.from(res.data as ArrayBuffer);
 }
 
-/** Extract text from a single Drive file. Returns null if unreadable. */
-async function extractFile(
-  file: drive_v3.Schema$File,
-): Promise<string | null> {
+/**
+ * What one Drive file yielded: a document plus its weight against the size
+ * budget, a fixed skip reason, or null for "no readable text". Text weighs its
+ * own length (recomputed once truncation and comments are applied); a visual
+ * page or an image costs far more per byte, so it carries its own estimate.
+ */
+type Extracted = { doc: Doc; chars: number } | { reason: string } | null;
+
+function textDoc(title: string, text: string): Extracted {
+  return { doc: { kind: "text", title, text }, chars: text.length };
+}
+
+/** Read a single Drive file as a document. Returns null if unreadable. */
+async function extractFile(file: drive_v3.Schema$File): Promise<Extracted> {
   const mime = file.mimeType ?? "";
   const id = file.id!;
+  const title = file.name ?? "(untitled)";
 
   switch (mime) {
     case "application/vnd.google-apps.document":
-      return exportText(id, "text/plain");
+      return textDoc(title, await exportText(id, "text/plain"));
     case "application/vnd.google-apps.spreadsheet":
       // CSV export only returns the first tab, so go via xlsx to get them all.
       try {
-        return xlsxToText(
-          await exportBuffer(
-            id,
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        return textDoc(
+          title,
+          xlsxToText(
+            await exportBuffer(
+              id,
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ),
           ),
         );
       } catch {
-        return exportText(id, "text/csv"); // first tab only, better than nothing
+        // First tab only, better than nothing.
+        return textDoc(title, await exportText(id, "text/csv"));
       }
     case "application/vnd.google-apps.presentation":
-      return exportText(id, "text/plain");
+      return textDoc(title, await exportText(id, "text/plain"));
     case "application/pdf": {
+      if (tooBig(file, MAX_PDF_BYTES)) return { reason: TOO_LARGE_REASON };
+      const buf = await downloadBuffer(id);
       // Dynamic import keeps the heavy PDF dependencies out of routes that
       // never parse a PDF (e.g. the businesses list).
       const { PDFParse } = await import("pdf-parse");
-      const buf = await downloadBuffer(id);
       const parser = new PDFParse({ data: buf });
+      let text = "";
+      let pages = 1;
       try {
         const result = await parser.getText();
-        const text = result.text.trim();
-        // Image-only PDFs yield no extractable text (Build Spec §7).
-        return text.length > 0 ? text : null;
+        text = result.text.trim();
+        pages = Math.max(result.total, 1);
       } finally {
         await parser.destroy();
       }
+      // Enough text to work with: cheap, and citations come back per character.
+      if (text.length >= MIN_PDF_TEXT_PER_PAGE * pages) {
+        return textDoc(title, text);
+      }
+      // A scan or screenshots: send the bytes so the model reads the pages.
+      if (pages > MAX_PDF_PAGES) return { reason: TOO_LARGE_REASON };
+      return {
+        doc: { kind: "pdf", title, data: buf },
+        chars: PDF_PAGE_CHARS * pages,
+      };
     }
     case "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
       const buf = await downloadBuffer(id);
       const result = await mammoth.extractRawText({ buffer: buf });
-      return result.value;
+      return textDoc(title, result.value);
     }
     case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
       const buf = await downloadBuffer(id);
-      return xlsxToText(buf);
+      return textDoc(title, xlsxToText(buf));
+    }
+    case "image/png":
+    case "image/jpeg":
+    case "image/gif":
+    case "image/webp": {
+      if (tooBig(file, MAX_IMAGE_BYTES)) return { reason: TOO_LARGE_REASON };
+      const buf = await downloadBuffer(id);
+      return {
+        doc: { kind: "image", title, data: buf, mediaType: mime },
+        chars: IMAGE_CHARS,
+      };
     }
     case "text/plain":
     case "text/markdown":
     case "text/csv":
-      return (await downloadBuffer(id)).toString("utf8");
+      return textDoc(title, (await downloadBuffer(id)).toString("utf8"));
     default:
       // .md sometimes arrives as application/octet-stream or no mime.
       if (/\.(md|markdown|txt)$/i.test(file.name ?? "")) {
-        return (await downloadBuffer(id)).toString("utf8");
+        return textDoc(title, (await downloadBuffer(id)).toString("utf8"));
       }
       return null;
   }
@@ -305,7 +375,7 @@ async function listFolder(folderId: string): Promise<drive_v3.Schema$File[]> {
   do {
     const res = await getDrive().files.list({
       q: `'${folderId}' in parents and trashed = false`,
-      fields: "nextPageToken, files(id, name, mimeType, modifiedTime)",
+      fields: "nextPageToken, files(id, name, mimeType, modifiedTime, size)",
       orderBy: "folder,name",
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
@@ -325,7 +395,16 @@ async function listFolder(folderId: string): Promise<drive_v3.Schema$File[]> {
 
 type Item =
   | { name: string; reason: string }
-  | { name: string; modified: string; text: string; cut: boolean };
+  | {
+      name: string;
+      modified: string;
+      /** The file's document, plus a comments doc when it cannot hold them. */
+      docs: Doc[];
+      chars: number;
+      /** Base64 payload this file adds, 0 for text. */
+      bytes: number;
+      cut: boolean;
+    };
 
 /**
  * Walk a folder tree and extract every readable file. Files within a folder
@@ -345,7 +424,38 @@ async function collect(id: string, depth: number): Promise<Item[]> {
       if (isExcluded(name, isFolder)) return [{ name, reason: EXCLUDED_REASON }];
       if (isFolder) return collect(file.id!, depth + 1);
       try {
-        let text = (await extractFile(file))?.trim() ?? "";
+        const extracted = await extractFile(file);
+        if (!extracted) return [{ name, reason: "no readable text" }];
+        if ("reason" in extracted) return [{ name, reason: extracted.reason }];
+
+        const modified = (file.modifiedTime ?? "").slice(0, 10) || "unknown";
+        const comments = await fetchComments(file.id!);
+        const doc = extracted.doc;
+
+        if (doc.kind !== "text") {
+          // A pdf/image document cannot carry appended text, so its comments
+          // become their own document right after it.
+          const docs: Doc[] = [doc];
+          if (comments) {
+            docs.push({
+              kind: "text",
+              title: `${name} (comments)`,
+              text: comments,
+            });
+          }
+          return [
+            {
+              name,
+              modified,
+              docs,
+              chars: extracted.chars + comments.length,
+              bytes: base64Bytes(doc.data.length),
+              cut: false,
+            },
+          ];
+        }
+
+        let text = doc.text.trim();
         if (!text) return [{ name, reason: "no readable text" }];
         const cut = text.length > MAX_FILE_CHARS;
         if (cut) {
@@ -353,12 +463,14 @@ async function collect(id: string, depth: number): Promise<Item[]> {
             text.slice(0, MAX_FILE_CHARS) +
             "\n[truncated: file exceeds size cap]";
         }
-        const comments = await fetchComments(file.id!);
+        text = `${text}\n${comments}`;
         return [
           {
             name,
-            modified: (file.modifiedTime ?? "").slice(0, 10) || "unknown",
-            text: `${text}\n${comments}`,
+            modified,
+            docs: [{ kind: "text", title: name, text }],
+            chars: text.length,
+            bytes: 0,
             cut,
           },
         ];
@@ -378,6 +490,7 @@ async function buildKnowledgeBase(folderId: string): Promise<KnowledgeBase> {
   const filesSkipped: FileSkipped[] = [];
   const docs: Doc[] = [];
   let totalChars = 0;
+  let totalBytes = 0;
   let truncated = false;
 
   for (const item of await collect(folderId, 0)) {
@@ -385,7 +498,10 @@ async function buildKnowledgeBase(folderId: string): Promise<KnowledgeBase> {
       filesSkipped.push(item);
       continue;
     }
-    if (totalChars + item.text.length > MAX_KB_CHARS) {
+    if (
+      totalChars + item.chars > MAX_KB_CHARS ||
+      totalBytes + item.bytes > MAX_PAYLOAD_BYTES
+    ) {
       truncated = true;
       filesSkipped.push({
         name: item.name,
@@ -394,9 +510,10 @@ async function buildKnowledgeBase(folderId: string): Promise<KnowledgeBase> {
       continue;
     }
     if (item.cut) truncated = true;
-    docs.push({ title: item.name, text: item.text });
+    docs.push(...item.docs);
     filesRead.push({ name: item.name, modified: item.modified });
-    totalChars += item.text.length;
+    totalChars += item.chars;
+    totalBytes += item.bytes;
   }
 
   return { docs, filesRead, filesSkipped, truncated };

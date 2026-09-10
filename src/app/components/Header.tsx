@@ -28,6 +28,9 @@ export function Header({ showNav = true }: { showNav?: boolean }) {
           </div>
           {showNav && (
             <nav className="flex items-center gap-4">
+              <Link href="/referred" className="header-link">
+                Referred questions
+              </Link>
               <Link href="/add-business" className="header-link">
                 Add business
               </Link>

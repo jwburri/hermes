@@ -12,7 +12,8 @@
  * Both calls send an identical system block, beforeDocs, document blocks and
  * afterDocs, so the second call reads the first's cache. Two cache breakpoints:
  * the system block and afterDocs (the last stable block). Everything before the
- * tail must stay byte-stable between calls for the same business.
+ * tail must stay byte-stable between calls for the same business — which is why
+ * files attached to a single question go after the tail, not with the docs.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -35,9 +36,60 @@ const EXCERPT_CHARS = 200;
 
 const VERIFY_MAX_TOKENS = 16000; // shared with adaptive thinking
 
-export interface Doc {
-  title: string;
-  text: string;
+/**
+ * One document sent to the model. Text and native PDFs are `document` blocks
+ * with citations on; images cannot carry a title or citations, so they are sent
+ * as a label line plus the image itself.
+ */
+export type Doc =
+  | { kind: "text"; title: string; text: string }
+  | { kind: "pdf"; title: string; data: Buffer }
+  | {
+      kind: "image";
+      title: string;
+      data: Buffer;
+      mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+    };
+
+/** The content blocks for one document. */
+export function docBlocks(doc: Doc): Anthropic.ContentBlockParam[] {
+  switch (doc.kind) {
+    case "text":
+      return [
+        {
+          type: "document",
+          source: { type: "text", media_type: "text/plain", data: doc.text },
+          title: doc.title,
+          citations: { enabled: true },
+        },
+      ];
+    case "pdf":
+      return [
+        {
+          type: "document",
+          source: {
+            type: "base64",
+            media_type: "application/pdf",
+            data: doc.data.toString("base64"),
+          },
+          title: doc.title,
+          citations: { enabled: true },
+        },
+      ];
+    case "image":
+      return [
+        // The only way to tell the model which file the next block is.
+        { type: "text", text: `Image: ${doc.title}` },
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: doc.mediaType,
+            data: doc.data.toString("base64"),
+          },
+        },
+      ];
+  }
 }
 
 /** The byte-stable half of the prompt, shared by both calls so the cache hits. */
@@ -125,24 +177,30 @@ function reasoning(model: string): {
   };
 }
 
-/** The user content: prose, one document block per file, prose, uncached tail. */
+const ATTACHMENTS_INTRO =
+  "Files attached to this question by the team member (read them as part of the buyer's message):";
+
+/**
+ * The user content: prose, the business documents, prose, uncached tail, then
+ * any files attached to this one question. Attachments sit after the afterDocs
+ * cache breakpoint so they never invalidate the cached prefix.
+ */
 function content(
   prompt: AnswerPrompt,
   tail: string,
+  attachments: Doc[],
 ): Anthropic.ContentBlockParam[] {
-  return [
+  const blocks: Anthropic.ContentBlockParam[] = [
     { type: "text", text: prompt.beforeDocs },
-    ...prompt.docs.map(
-      (doc): Anthropic.DocumentBlockParam => ({
-        type: "document",
-        source: { type: "text", media_type: "text/plain", data: doc.text },
-        title: doc.title,
-        citations: { enabled: true },
-      }),
-    ),
+    ...prompt.docs.flatMap(docBlocks),
     { type: "text", text: prompt.afterDocs, cache_control: CACHE },
     { type: "text", text: tail },
   ];
+  if (attachments.length) {
+    blocks.push({ type: "text", text: ATTACHMENTS_INTRO });
+    blocks.push(...attachments.flatMap(docBlocks));
+  }
+  return blocks;
 }
 
 function systemBlocks(prompt: AnswerPrompt): Anthropic.TextBlockParam[] {
@@ -154,7 +212,11 @@ function systemBlocks(prompt: AnswerPrompt): Anthropic.TextBlockParam[] {
  * answer, never a citation marker); thinking blocks are produced but never
  * streamed to the caller.
  */
-export function streamAnswer(prompt: AnswerPrompt, tail: string): AnswerStream {
+export function streamAnswer(
+  prompt: AnswerPrompt,
+  tail: string,
+  attachments: Doc[] = [],
+): AnswerStream {
   const model = config.anthropic.model();
 
   const stream = getClient().messages.stream({
@@ -162,7 +224,7 @@ export function streamAnswer(prompt: AnswerPrompt, tail: string): AnswerStream {
     max_tokens: config.anthropic.maxTokens(),
     ...reasoning(model),
     system: systemBlocks(prompt),
-    messages: [{ role: "user", content: content(prompt, tail) }],
+    messages: [{ role: "user", content: content(prompt, tail, attachments) }],
   });
 
   async function* iterate(): AsyncGenerator<string> {
@@ -251,6 +313,7 @@ export async function verifyAnswer(
   prompt: AnswerPrompt,
   questions: string,
   answer: string,
+  attachments: Doc[] = [],
 ): Promise<{ flags: Flags; usage: AnswerUsage }> {
   const model = config.anthropic.model();
   try {
@@ -262,7 +325,11 @@ export async function verifyAnswer(
       messages: [
         {
           role: "user",
-          content: content(prompt, verifyInstruction(questions, answer)),
+          content: content(
+            prompt,
+            verifyInstruction(questions, answer),
+            attachments,
+          ),
         },
       ],
     });
