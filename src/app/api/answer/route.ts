@@ -160,6 +160,15 @@ export async function POST(request: Request) {
     );
   }
 
+  // No documents means no answer. Without this the model would answer from
+  // prior answers and memory alone, which is the one thing Hermes must not do.
+  if (!loaded.docs.length) {
+    return errorResponse(
+      "Hermes could not read any documents in this business's Drive folder. Check the folder link in the registry and that the folder is shared with Hermes, then try again.",
+      500,
+    );
+  }
+
   // A new object: loadKnowledgeBase caches and shares the one it returns.
   const confirmedText = renderConfirmedAnswers(confirmed);
   const knowledgeBase: KnowledgeBase = confirmedText

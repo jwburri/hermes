@@ -534,6 +534,12 @@ export function loadKnowledgeBase(folderId: string): Promise<KnowledgeBase> {
   if (hit && Date.now() - hit.at < KB_TTL_MS) return hit.kb;
   const kb = buildKnowledgeBase(folderId);
   kbCache.set(folderId, { at: Date.now(), kb });
-  kb.catch(() => kbCache.delete(folderId));
+  // Never cache a failure or an empty read: the next question retries Drive.
+  kb.then(
+    (k) => {
+      if (!k.docs.length) kbCache.delete(folderId);
+    },
+    () => kbCache.delete(folderId),
+  );
   return kb;
 }
