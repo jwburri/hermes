@@ -1,5 +1,7 @@
 # Hermes Build Spec
 
+> **Status note (2026-09-10).** This is the original Phase 1a specification. It is still the reference for the product shape, the Airtable registry and log, and the Phase 2 (buyer-facing) intent. It is superseded on the model (now `claude-sonnet-5` with adaptive thinking), hosting (Render, not Vercel), document ingestion, prompt caching, the answer stream format, the Q&A log fields and the folder rules. Where it disagrees with `Hermes_Handoff.md` or `Hermes_V2_Plan.md`, those win.
+
 **What this is.** The master build document for Hermes, JWB's buyer-question answering app. It is written for two readers. Claude Code builds the app from it. Danial runs and maintains the app from it. It assumes no prior knowledge of the project. If you are picking this up cold, read this file top to bottom once, then keep the Maintenance and Ops section open day to day.
 
 **Status.** Specification, ready to build. Nothing has been built or deployed yet.
