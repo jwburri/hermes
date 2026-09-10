@@ -19,6 +19,13 @@
  *
  * The internal dropdown app calls this today; a tokenised buyer link can call
  * the same endpoint later (Phase 2) with no rebuild.
+ *
+ * Two optional request flags, alongside businessId/questions (booleans in the
+ * JSON body, "1"/"true" in the multipart form):
+ *   dryRun  — skip the Airtable log write and the referred-questions write.
+ *             For scripts/regress.ts, so a regression run leaves no trace.
+ *   refresh — bypass the five-minute knowledge-base cache and re-read Drive,
+ *             for when a document was just added or changed.
  */
 
 import {
@@ -84,11 +91,15 @@ const CONFIRMED_TITLE = "Confirmed answers from the seller";
 export async function POST(request: Request) {
   let businessId = "";
   let questions = "";
+  let dryRun = false;
+  let refresh = false;
   const attachments: Doc[] = [];
   const attachmentsRead: string[] = [];
   const attachmentsIgnored: string[] = [];
 
   const asString = (value: unknown) => (typeof value === "string" ? value : "");
+  /** Form fields arrive as strings; a checkbox sends "1". */
+  const asFlag = (value: unknown) => value === "1" || value === "true";
 
   const contentType = request.headers.get("content-type") ?? "";
   if (contentType.includes("multipart/form-data")) {
@@ -100,6 +111,8 @@ export async function POST(request: Request) {
     }
     businessId = asString(form.get("businessId"));
     questions = asString(form.get("questions")).trim();
+    dryRun = asFlag(form.get("dryRun"));
+    refresh = asFlag(form.get("refresh"));
 
     // An empty file input still submits one zero-byte entry; drop those.
     const files = form
@@ -122,6 +135,8 @@ export async function POST(request: Request) {
       const body = await request.json();
       businessId = asString(body?.businessId);
       questions = asString(body?.questions).trim();
+      dryRun = body?.dryRun === true || asFlag(body?.dryRun);
+      refresh = body?.refresh === true || asFlag(body?.refresh);
     } catch {
       return errorResponse("Invalid request", 400);
     }
@@ -149,7 +164,7 @@ export async function POST(request: Request) {
   try {
     // Only the Drive read throws; the two Airtable reads are best-effort.
     [loaded, priors, confirmed] = await Promise.all([
-      loadKnowledgeBase(folderId),
+      loadKnowledgeBase(folderId, refresh),
       recentAnswers(listing.businessName),
       confirmedAnswers(listing.businessName),
     ]);
@@ -298,7 +313,7 @@ export async function POST(request: Request) {
           const loggedQuestions = attachmentsRead.length
             ? `${questions}\n\n[Attached: ${attachmentsRead.join(", ")}]`
             : questions;
-          if (logged && result?.stopReason !== "refusal") {
+          if (logged && !dryRun && result?.stopReason !== "refusal") {
             await logSubmission(listing.businessName, loggedQuestions, logged, {
               model: result?.model ?? config.anthropic.model(),
               effort: config.anthropic.effort(),
@@ -319,7 +334,7 @@ export async function POST(request: Request) {
         // Same best-effort deal: the team saw the referral in the answer, so a
         // failed write here must not break anything.
         try {
-          if (referred.length && result?.stopReason !== "refusal") {
+          if (referred.length && !dryRun && result?.stopReason !== "refusal") {
             await addReferred(listing.businessName, referred);
           }
         } catch (referErr) {

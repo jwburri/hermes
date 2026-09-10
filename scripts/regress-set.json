@@ -1,0 +1,73 @@
+{
+  "cases": [
+    {
+      "business": "Gronanda.com",
+      "questions": "1. What is the average monthly net profit?\n2. Why is the seller selling?\n3. What is your commission on this deal?"
+    },
+    {
+      "business": "Gronanda.com",
+      "questions": "What is the latest revenue and profit in May 2026",
+      "repeat": true
+    },
+    {
+      "business": "Gronanda.com",
+      "questions": "What is the latest revenue and profit in May 2024"
+    },
+    {
+      "business": "Gronanda.com",
+      "questions": "We own another footwear brand, we could definitely buy this.\nHow much inventory is on hand? \nDoes it ship from China directly? \nWhats the current return %?\nFor Fleya, do you own the tooling?\nWhat is the Shopify Payments dispute rate, by month, for the last 24 months?\nCan the agency confirm in writing that the Meta account and pixel transfer?"
+    },
+    {
+      "business": "Gronanda.com",
+      "questions": "Can you confirm that all current contractor costs are reflected in the P&L and provide a quick breakdown of the contractors, their responsibilities, monthly costs, and whether they’re expected to continue after a sale?\n\nFor the dropshipped products, how concentrated is the business among suppliers? \n\nAre these products available to other retailers, and are there any exclusivity arrangements or preferential pricing with Grönanda?\n\nHow does the fulfillment relationship work contractually? \n\nIs the logistics partner/supplier relationship fully transferable to a buyer on the same pricing, payment terms and service levels?\n\nWho currently handles product selection and product development for the dropshipped catalog? \n\nHow are new products identified, tested and launched?\n\nFor proprietary products like Fleya, who actually handles the design and development process? \n\nWould the seller provide a transition around product development, manufacturer communication and launching future custom products?\n\nDoes Grönanda own the Fleya design files/specifications even though the manufacturer owns the molds/tooling, and could those designs be moved to another manufacturer if necessary?\n\nWhat are the current MOQ, landed cost and production lead times for Fleya, and approximately what gross margin does it generate?\n\nCan you provide the top products by revenue for the last 12 months and indicate how concentrated sales are among the top 5–10 products?\n\nFinally, are there any operational functions the owner currently performs that would be difficult for a buyer or the existing contractors to take over immediately?"
+    },
+    {
+      "business": "Gronanda.com",
+      "questions": "Hi Joe, we are still interested in Gronanda, but have some concerns and questions. For background, we are building an AI-first ecommerce management team and have bought a couple of brands to run as test cases. This is now working, so we are looking to expand. Is Gronanda owned/run by the shoe manufacturer, looking to offload to a prof org to run while they still get the orders, or is this an independent third party who built this separate from the manufacturer. The reason I ask is to determine motivation and appetite for a creatively structured deal. We have some concerns about product quality etc., and would want to move the brand onto Amazon etc, thereby requiring returns, inventory held etc. Would a call make sense to get this background, or is you/owners's motivation just 'make an offer and take the business'..?"
+    },
+    {
+      "business": "Gronanda.com",
+      "questions": "It’s an interesting business. Here are some questions I have. I’m not looking to create any work for you just trying to understand some of the trends and potential here. If this is too cumbersome pls provide what you think makes sense and have off the shelf. Thanks, Amit\n\n1. Please provide a customer cohort analysis, including retention by acquisition month, repeat purchase rates, purchase frequency, average time between purchases, and customer lifetime value (LTV).\n2. What percentage of customers acquired over the past 12 months have made a second purchase, and what are the primary repeat purchase products?\n3. Please provide key customer economics by acquisition channel (Meta, Google, Email, Organic, Direct), including CAC, LTV/CAC, ROAS, contribution margin, refund rate, return rate, and chargeback rate.\n4. Please provide a breakdown of revenue, gross margin, and contribution margin by product line, including the Fleya shoe versus the dropship catalog. What percentage of revenue and gross profit comes from proprietary products?\n5. Please explain the decline in profitability over the past two years. Was this primarily driven by the U.S. market expansion, higher customer acquisition costs, lower advertising efficiency, or other factors? What gives you confidence margins can recover?\n6. How are current and potential U.S. tariffs expected to impact the business, and what contingency plans do you have regarding manufacturing, sourcing, pricing, and alternative suppliers outside China?\n7. Why have you not launched on Amazon to date? Was this a strategic decision, a capital constraint, operational complexity, or did prior testing indicate unattractive economics?\n8. What is the current value and turnover of the Fleya inventory, and what percentage of sales are generated from stocked inventory versus dropshipped products?\n9. What percentage of revenue and gross profit comes from repeat customers versus first-time customers? If Meta advertising were reduced materially, how much revenue would you expect to retain through repeat customers and owned channels such as email and direct traffic?\n10. If you were keeping the business for the next three years, what would your operating plan be, and what revenue, EBITDA, and key operating metrics would you expect to achieve?"
+    },
+    {
+      "business": "Gronanda.com",
+      "questions": "How much should I pay for this business?"
+    },
+    {
+      "business": "Gronanda.com",
+      "questions": "Please read the attached screenshot of the buyer's email and help me reply.",
+      "attachments": [
+        "scripts/fixtures/buyer-email.png"
+      ]
+    },
+    {
+      "business": "OwnVitality.com",
+      "questions": "I was curious why the seller hasn't increased the adspend from the 25-50 per day range, when it's generating 50x return? Is the profitable audience very narrow and what is the possibility that it's already saturated now?",
+      "repeat": true
+    },
+    {
+      "business": "OwnVitality.com",
+      "questions": "The 30% commission is not accounted for in the revenue and profits calcs. How can there be a 94% profit margin? And ad spend is not accounted for either?\n\nI also dont understand how a $600 price tag for a 30 servings supplement could possibly be justified or supported by the market."
+    },
+    {
+      "business": "OwnVitality.com",
+      "questions": "One thing I wanted to clarify before I dig back in. The P&L shows Taboola advertising expense of roughly $25–$47 per month, but the business description says SpendGuard reduced the daily budget from $47 to $25 in May. Can you confirm whether the $25–$47 figures are monthly actual spend, or daily budget levels? I just want to make sure I’m understanding the true ad spend and net margin correctly."
+    },
+    {
+      "business": "OwnVitality.com",
+      "questions": "What is profit and revenue figure in June 2026"
+    },
+    {
+      "business": "DesignWorkLife.com",
+      "questions": "Could you share a monthly revenue breakdown for the last 12 months, and also help me understand what drove last month's revenue to be lower than the trailing average? Also, curious which pages and tools are driving the most revenue currently and how many sponsored posts have been sold in the last 6 months"
+    },
+    {
+      "business": "DesignWorkLife.com",
+      "questions": "curious which pages and tools are driving the most revenue currently and how many sponsored posts have been sold in the last 6 months."
+    },
+    {
+      "business": "Anime Anime Youtube Channel",
+      "questions": "What's the L12 months profit"
+    }
+  ]
+}

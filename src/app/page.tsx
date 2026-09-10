@@ -47,6 +47,7 @@ export default function Home() {
   const [businessId, setBusinessId] = useState("");
   const [questions, setQuestions] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [refresh, setRefresh] = useState(false);
   const [answer, setAnswer] = useState("");
   const [coverage, setCoverage] = useState<Coverage | null>(null);
   const [attachmentsRead, setAttachmentsRead] = useState<string[]>([]);
@@ -88,6 +89,7 @@ export default function Home() {
       form.append("businessId", businessId);
       form.append("questions", questions);
       files.forEach((f) => form.append("files", f));
+      if (refresh) form.append("refresh", "1");
       // Let the browser set the multipart boundary; never set content-type.
       const res = await fetch("/api/answer", { method: "POST", body: form });
 
@@ -143,8 +145,10 @@ export default function Home() {
       setError("Something went wrong while getting answers.");
     } finally {
       // Always drop the attachments, so a stale screenshot can never ride
-      // along with the next question.
+      // along with the next question. Same for the re-read tick: it is a
+      // one-off, not a setting.
       setFiles([]);
+      setRefresh(false);
       setLoading(false);
     }
   }
@@ -263,6 +267,16 @@ export default function Home() {
           {fileError && (
             <p className="text-sm text-red-600 mb-3">{fileError}</p>
           )}
+
+          <label className="text-sm flex items-center gap-2 mb-3">
+            <input
+              type="checkbox"
+              checked={refresh}
+              onChange={(e) => setRefresh(e.target.checked)}
+            />
+            Re-read the documents from Drive first (tick after adding or
+            changing a file)
+          </label>
 
           <button type="submit" disabled={!canSubmit} className="btn-primary">
             {loading && <span className="spinner" aria-hidden />}

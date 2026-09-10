@@ -527,9 +527,14 @@ const kbCache = new Map<string, { at: number; kb: Promise<KnowledgeBase> }>();
 
 /**
  * Load the knowledge base for a registered folder, reusing a copy fetched in
- * the last five minutes (Build Spec §7).
+ * the last five minutes (Build Spec §7). Pass refresh to re-read Drive now,
+ * for when someone has just added or changed a file.
  */
-export function loadKnowledgeBase(folderId: string): Promise<KnowledgeBase> {
+export function loadKnowledgeBase(
+  folderId: string,
+  refresh = false,
+): Promise<KnowledgeBase> {
+  if (refresh) kbCache.delete(folderId);
   const hit = kbCache.get(folderId);
   if (hit && Date.now() - hit.at < KB_TTL_MS) return hit.kb;
   const kb = buildKnowledgeBase(folderId);
