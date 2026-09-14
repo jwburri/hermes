@@ -1,6 +1,6 @@
 # Hermes: how to use it
 
-One page. From a new listing to answered buyer questions. Hermes is at https://hermes.justwebsitebrokerage.com, team password from Joe.
+One page. From a new listing to answered buyer questions. Team password from Joe. Hermes lives at https://hermes.justwebsitebrokerage.com
 
 ## 1. Set up the Drive folder (once per listing)
 
@@ -46,10 +46,7 @@ Then ask it one question and open "Documents Hermes read" under the answer. If a
 
 1. Pick the business. Paste the buyer's questions, or the whole email thread. Attach any screenshot, PDF or spreadsheet the buyer sent (up to five files).
 2. Get answers. About 30 seconds for a short question, a few minutes for a long batch.
-3. Read three things before you send:
-   - **The answer.** Hermes corrects wrong figures in the buyer's question and gives the period for every number.
-   - **Notes for you.** Never for the buyer. Corrections made, documents that disagree, trends, questions referred to the seller.
-   - **Check before sending.** A second pass that lists any claim it could not find in the documents. If something is listed, check it yourself before sending.
+3. Read three things before you send. **The answer**: Hermes corrects wrong figures in the buyer's question and gives the period for every number. **Notes for you**: never for the buyer; corrections made, documents that disagree, trends, questions referred to the seller. **Check before sending**: a second pass listing any claim it could not find in the documents. If something is listed, check it yourself.
 4. Copy answers copies only the buyer-facing part. Paste into your email and send.
 
 ## 5. Questions Hermes refers to the seller
