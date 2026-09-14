@@ -156,6 +156,7 @@ Engineering, in order:
 
 ## 10. Which documents are current
 
+- `Hermes_SOP.md`: the one-page team manual (folder set-up, the two skills, registering a listing, answering, referred questions). Give this to the team.
 - `Hermes_Handoff.md` (this file): current state and operations. Start here.
 - `Hermes_V2_Plan.md`: the analysis of Aiman's feedback, root causes, decisions, phases, and what is shipped versus pending. Current.
 - `Hermes_Listing_Folder_Spec.md`: folder rules. Current.

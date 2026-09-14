@@ -24,7 +24,7 @@ That is the whole process. No moving files, no developer, no deploy.
 Register the listing's deal folder. Hermes reads every file in it and in its subfolders, and may use anything it reads to answer a buyer. Three things keep the wrong documents out (decided 2026-09-08):
 
 1. **A `Legals` folder inside each listing folder.** Every agreement, LOI, counter-LOI, APA, term sheet and broker agreement goes in there and nowhere else. Hermes is hard-coded never to open a folder named Legal or Legals. Loose legal documents at the top level of the deal folder must be moved into it.
-2. **File-name patterns.** As a second net, Hermes skips any file or folder whose name contains LOI, APA, letter of intent, offer, counter, negotiation, contract, term sheet, heads of terms, broker, commission, engagement letter, call summary or outreach, wherever it sits.
+2. **File-name patterns.** As a second net, Hermes skips any file or folder whose name contains broker, commission, engagement letter, call summary, asset purchase agreement, outreach or legal, and any file (not folder, because "LOI Dataroom" is a legitimate folder name) whose name contains LOI, APA, letter of intent, negotiation, term sheet or heads of terms. "Offer", "counter" and "contract" were deliberately left out as too broad.
 3. **The coverage panel.** Every answer in Hermes lists the files it read and the files it skipped with the reason. Check it when a listing is first registered, and glance at it if an answer looks off. A misfiled document shows up there immediately.
 
 The seller interview stays in the folder as it is. The Brain hides the seller's identity. The business's domain, brand, platforms and traffic sources are disclosable, because every buyer reaching Hermes has signed an NDA and already knows the business.
@@ -47,12 +47,13 @@ There is no fixed file list and no required file names. The more complete the fo
 
 ## File formats Hermes can read
 
-- Google Docs, Google Sheets, Google Slides (read natively)
-- PDF (text is extracted, see the caution below)
-- Word (.docx), Excel (.xlsx)
+- Google Docs, Google Sheets (every tab), Google Slides (read natively)
+- PDF, including scans and screenshot-only PDFs (read visually since Phase C)
+- Word (.docx), Excel (.xlsx), CSV
+- PNG, JPG, GIF and WEBP images (read visually since Phase C)
 - Plain text (.txt) and Markdown (.md)
 
-**One caution on PDFs.** If a PDF has selectable text, Hermes reads it fine. If a PDF is just a screenshot or photo (for example a revenue proof that is an image), there is no text in it to read. If a number only exists as a screenshot, also write that number as text somewhere in the folder (in the Business Description or a short notes doc) so Hermes can answer on it. The build spec covers an optional image-reading upgrade if this becomes a regular problem.
+Not readable: Apple Numbers files (export to Google Sheets or Excel), HEIC or TIFF images, PDFs over 10 MB or 600 pages, images over 5 MB. The "Documents Hermes read" panel under every answer shows what was skipped and why.
 
 ## Drive access (set up once)
 
@@ -62,11 +63,11 @@ If a listing folder is ever created outside that shared drive, it will not be re
 
 ## Updating a business
 
-If a document changes (an updated P&L for example), edit or replace the file in that business's Drive folder. Hermes picks up the current version within a few minutes (it briefly caches each business's files, see the build spec). The team only ever maintains the documents and the registry, never Hermes itself.
+If a document changes (an updated P&L for example), edit or replace the file in that business's Drive folder. Hermes picks up the current version within five minutes, or straight away if you tick "Re-read the documents from Drive first" on the next question. The team only ever maintains the documents and the registry, never Hermes itself.
 
 ## Capturing new answers from the seller
 
-When a buyer asks something Hermes cannot answer, Hermes refers it to the seller. Once the seller replies, you do not need to edit a Drive document. Open the Referred questions screen in Hermes for that business, type the seller's answer, and save (or fill the answer into the Hermes Q&A Log table in Airtable). Hermes then includes that confirmed answer the next time the same thing is asked, so each business's knowledge grows as buyers ask questions. The full mechanism is in the build spec, Section 10.
+When a buyer asks something Hermes cannot answer, Hermes refers it to the seller. Once the seller replies, you do not need to edit a Drive document. Open the Referred questions screen in Hermes, type the seller's answer under the question, and save (or fill Seller Answer and set Status to Resolved on that row of the Hermes Referred Questions table in Airtable). Hermes then includes that confirmed answer the next time the same thing is asked, so each business's knowledge grows as buyers ask questions. The full mechanism is in the build spec, Section 10.
 
 ## Removing or pausing a business
 
